@@ -29,7 +29,7 @@ type WalletSnapshot = {
   address: string;
 };
 
-const STORAGE_KEY = "aoe2hdbets.keplr.wallet.v1";
+const STORAGE_KEY = "AoE2DEWarWagers.keplr.wallet.v1";
 const listeners = new Set<(snapshot: WalletSnapshot) => void>();
 
 let snapshot: WalletSnapshot = {

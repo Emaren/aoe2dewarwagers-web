@@ -23,7 +23,7 @@ export function WoloFeatureTile() {
 
           <p className="max-w-2xl text-sm leading-6 text-slate-300 sm:text-[15px]">
             WOLO is the token layer for tournaments, replay-backed trust, and the next step toward
-            verified match identity on AoE2HDBets.
+            verified match identity on AoE2DE War Wagers.
           </p>
         </div>
 

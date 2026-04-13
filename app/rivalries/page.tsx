@@ -19,7 +19,7 @@ export default async function RivalriesPage() {
         <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="space-y-5">
             <div className="text-sm uppercase tracking-[0.4em] text-sky-200/70">Rivalries</div>
-            <h1 className="sr-only">AoE2HDBets rivalries</h1>
+            <h1 className="sr-only">AoE2DE War Wagers rivalries</h1>
 
             <div className="flex flex-wrap gap-2">
               <Tag>{rivalries.length} boards live</Tag>

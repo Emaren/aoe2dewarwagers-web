@@ -28,8 +28,8 @@ import {
 const WOLO_LOGO_SRC = "/legacy/wolo-logo-transparent.png";
 const STAKE_OPTIONS = [10, 25, 50, 100] as const;
 const BETS_POLL_INTERVAL_MS = 5_000;
-const STAKE_RECOVERY_STORAGE_KEY = "aoe2hdbets.betStakeRecovery.v1";
-const BETS_VIEW_STORAGE_KEY = "aoe2hdbets.betsView.v1";
+const STAKE_RECOVERY_STORAGE_KEY = "AoE2DEWarWagers.betStakeRecovery.v1";
+const BETS_VIEW_STORAGE_KEY = "AoE2DEWarWagers.betsView.v1";
 type BetSide = "left" | "right";
 type BetStatus = "open" | "closing" | "live" | "settled";
 type BetsViewMode = "basic" | "advanced";
@@ -1101,7 +1101,7 @@ export default function BetsPage() {
         runtimeBetEscrowAddress,
         [{ amount: toUwoLoAmount(amountWolo), denom: WOLO_BASE_DENOM }],
         "auto",
-        `AoE2HDBets bet stake · market ${market.id}`
+        `AoE2DEWarWagers bet stake · market ${market.id}`
       );
 
       return {

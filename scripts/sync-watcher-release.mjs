@@ -38,11 +38,11 @@ export type WatcherDownloadArtifact = {
 
 export const WATCHER_RELEASE = {
   version: ${JSON.stringify(version)},
-  label: ${JSON.stringify(`AoE2HDBets Watcher ${version}`)},
+  label: ${JSON.stringify(`AoE2DEWarWagers Watcher ${version}`)},
   releasedOn: ${JSON.stringify(releasedOn)},
   signingStatus: "Unsigned builds for now",
   featureChips: ${JSON.stringify(
-    [`AoE2HDBets Watcher ${version}`, releasedOn, ...FEATURE_CHIPS],
+    [`AoE2DEWarWagers Watcher ${version}`, releasedOn, ...FEATURE_CHIPS],
     null,
     2
   ).replace(/\n/g, "\n  ")},
@@ -55,11 +55,11 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
     title: "Windows Installer",
     shortLabel: "NSIS installer",
     badge: "Recommended",
-    filename: ${JSON.stringify(`AoE2HDBets Watcher Setup ${version}.exe`)},
+    filename: ${JSON.stringify(`AoE2DEWarWagers Watcher Setup ${version}.exe`)},
     format: "NSIS",
     description:
       "Smoothest Windows path. Installs cleanly, creates shortcuts, and keeps the first run obvious.",
-    downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2HDBets Watcher Setup ${version}.exe`)}`)},
+    downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2DEWarWagers Watcher Setup ${version}.exe`)}`)},
     trackedHref: "/download/watcher/windows-installer",
     primary: true,
     featuredOnDownloadPage: true,
@@ -70,11 +70,11 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
     title: "Windows Portable",
     shortLabel: "Backup EXE",
     badge: "Fallback",
-    filename: ${JSON.stringify(`AoE2HDBets Watcher ${version}.exe`)},
+    filename: ${JSON.stringify(`AoE2DEWarWagers Watcher ${version}.exe`)},
     format: "portable",
     description:
       "Same watcher core in a no-installer package if SmartScreen or installer policy gets in the way.",
-    downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2HDBets Watcher ${version}.exe`)}`)},
+    downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2DEWarWagers Watcher ${version}.exe`)}`)},
     trackedHref: "/download/watcher/windows-portable",
     primary: false,
     featuredOnDownloadPage: true,
@@ -85,11 +85,11 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
     title: "macOS DMG",
     shortLabel: "Apple Silicon",
     badge: "Mac first",
-    filename: ${JSON.stringify(`AoE2HDBets Watcher-${version}-arm64.dmg`)},
+    filename: ${JSON.stringify(`AoE2DEWarWagers Watcher-${version}-arm64.dmg`)},
     format: "DMG",
     description:
-      "Best Mac install path. Drag in, pair once, and keep it open while AoE2HD runs under macOS or CrossOver.",
-    downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2HDBets Watcher-${version}-arm64.dmg`)}`)},
+      "Best Mac install path. Drag in, pair once, and keep it open while AoE2DE runs under macOS or CrossOver.",
+    downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2DEWarWagers Watcher-${version}-arm64.dmg`)}`)},
     trackedHref: "/download/watcher/mac-dmg",
     primary: false,
     featuredOnDownloadPage: true,
@@ -100,11 +100,11 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
     title: "macOS Direct ZIP",
     shortLabel: "Manual fallback",
     badge: "Fallback",
-    filename: "aoe2hdbets-watcher-direct.zip",
+    filename: "AoE2DEWarWagers-watcher-direct.zip",
     format: "ZIP",
     description:
       "Same Mac app bundle, packaged as a direct ZIP for users who hit DMG or Gatekeeper friction.",
-    downloadPath: "/downloads/aoe2hdbets-watcher-direct.zip",
+    downloadPath: "/downloads/AoE2DEWarWagers-watcher-direct.zip",
     trackedHref: "/download/watcher/mac-zip",
     primary: false,
     featuredOnDownloadPage: true,
@@ -115,11 +115,11 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
     title: "Linux AppImage",
     shortLabel: "Linux build",
     badge: "Linux",
-    filename: ${JSON.stringify(`AoE2HDBets Watcher-${version}.AppImage`)},
+    filename: ${JSON.stringify(`AoE2DEWarWagers Watcher-${version}.AppImage`)},
     format: "AppImage",
     description:
       "Portable Linux watcher for Proton or Wine-heavy setups where manual replay-folder selection matters most.",
-    downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2HDBets Watcher-${version}.AppImage`)}`)},
+    downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2DEWarWagers Watcher-${version}.AppImage`)}`)},
     trackedHref: "/download/watcher/linux-appimage",
     primary: false,
     featuredOnDownloadPage: true,
@@ -200,40 +200,40 @@ async function main() {
 
   const artifactCopies = [
     {
-      source: path.join(watcherDistDir, `AoE2HDBets Watcher-${version}-arm64.dmg`),
-      target: path.join(downloadsDir, `AoE2HDBets Watcher-${version}-arm64.dmg`),
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg`),
     },
     {
-      source: path.join(watcherDistDir, `AoE2HDBets Watcher-${version}-arm64.dmg.blockmap`),
-      target: path.join(downloadsDir, `AoE2HDBets Watcher-${version}-arm64.dmg.blockmap`),
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg.blockmap`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg.blockmap`),
     },
     {
       source: path.join(watcherDistDir, "latest-mac.yml"),
       target: path.join(downloadsDir, "latest-mac.yml"),
     },
     {
-      source: path.join(watcherDistDir, "aoe2hdbets-watcher-direct.zip"),
-      target: path.join(downloadsDir, "aoe2hdbets-watcher-direct.zip"),
+      source: path.join(watcherDistDir, "AoE2DEWarWagers-watcher-direct.zip"),
+      target: path.join(downloadsDir, "AoE2DEWarWagers-watcher-direct.zip"),
     },
     {
-      source: path.join(watcherDistDir, `AoE2HDBets Watcher Setup ${version}.exe`),
-      target: path.join(downloadsDir, `AoE2HDBets Watcher Setup ${version}.exe`),
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher Setup ${version}.exe`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers Watcher Setup ${version}.exe`),
     },
     {
-      source: path.join(watcherDistDir, `AoE2HDBets Watcher Setup ${version}.exe.blockmap`),
-      target: path.join(downloadsDir, `AoE2HDBets Watcher Setup ${version}.exe.blockmap`),
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher Setup ${version}.exe.blockmap`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers Watcher Setup ${version}.exe.blockmap`),
     },
     {
       source: path.join(watcherDistDir, "latest.yml"),
       target: path.join(downloadsDir, "latest.yml"),
     },
     {
-      source: path.join(watcherDistDir, `AoE2HDBets Watcher ${version}.exe`),
-      target: path.join(downloadsDir, `AoE2HDBets Watcher ${version}.exe`),
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher ${version}.exe`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers Watcher ${version}.exe`),
     },
     {
-      source: path.join(watcherDistDir, `AoE2HDBets Watcher-${version}.AppImage`),
-      target: path.join(downloadsDir, `AoE2HDBets Watcher-${version}.AppImage`),
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}.AppImage`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers Watcher-${version}.AppImage`),
     },
   ];
 
@@ -242,7 +242,7 @@ async function main() {
   }
 
   process.stdout.write(
-    `Synced watcher release AoE2HDBets Watcher ${version} into ${downloadsDir}\n`
+    `Synced watcher release AoE2DEWarWagers Watcher ${version} into ${downloadsDir}\n`
   );
 }
 

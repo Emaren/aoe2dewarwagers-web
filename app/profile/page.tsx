@@ -59,7 +59,7 @@ type ClaimWoloResponse = {
 };
 
 function buildWatcherPairUrl(apiKey: string) {
-  return `aoe2hd-watcher://pair?apiKey=${encodeURIComponent(apiKey)}`;
+  return `AoE2DE-watcher://pair?apiKey=${encodeURIComponent(apiKey)}`;
 }
 
 function truncateUid(value: string | null | undefined) {

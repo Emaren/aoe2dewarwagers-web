@@ -137,7 +137,7 @@ function InnerShell({ children }: { children: React.ReactNode }) {
               <div className="min-w-0 flex-1 pt-1">
                 <Link href="/lobby" className="inline-block min-w-0">
                   <div className={`text-[11px] uppercase tracking-[0.35em] transition ${headerTone.eyebrow}`}>
-                    AoE2HD Bets
+                    AoE2DE War Wagers
                   </div>
                   <h1 className="text-2xl font-semibold leading-tight text-white transition hover:text-amber-100">
                     Tournament Lobby
@@ -207,7 +207,7 @@ function InnerShell({ children }: { children: React.ReactNode }) {
             <div className="min-w-0">
               <Link href="/lobby" className="inline-block min-w-0">
                 <div className={`text-xs uppercase tracking-[0.35em] transition ${headerTone.eyebrow}`}>
-                  AoE2HD Bets
+                  AoE2DE War Wagers
                 </div>
                 <h1 className="text-xl font-semibold text-white transition hover:text-amber-100">
                   Tournament Lobby

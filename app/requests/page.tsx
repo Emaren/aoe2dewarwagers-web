@@ -67,7 +67,7 @@ export default function RequestsPage() {
               </div>
 
               <p className="max-w-3xl text-sm leading-7 text-slate-300 sm:text-base">
-                AoE2HDBets is trying to make the important part obvious: who matters, what happened,
+                AoE2DE War Wagers is trying to make the important part obvious: who matters, what happened,
                 why the rivalry matters, and where the real proof lives.
               </p>
             </div>

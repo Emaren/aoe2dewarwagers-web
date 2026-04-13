@@ -20,8 +20,8 @@ import {
   WATCHER_RELEASE,
 } from "@/lib/watcherRelease";
 
-const MAC_TERMINAL_FALLBACK = `xattr -dr com.apple.quarantine "/Applications/AoE2HDBets Watcher.app"
-open "/Applications/AoE2HDBets Watcher.app"`;
+const MAC_TERMINAL_FALLBACK = `xattr -dr com.apple.quarantine "/Applications/AoE2DEWarWagers Watcher.app"
+open "/Applications/AoE2DEWarWagers Watcher.app"`;
 
 const QUICK_STEPS = [
   {
@@ -83,8 +83,7 @@ export default function DownloadPage() {
             </h1>
 
             <p className="mt-5 max-w-3xl text-sm leading-7 text-slate-300 sm:text-[15px]">
-              Import old replays, watch new ones, and keep your AoE2HD results landing without
-              babysitting the game folder.
+              Import old replays, watch new ones, and keep your AoE2DE results landing from the saved game folder.
             </p>
 
             <div className="mt-5 flex flex-wrap gap-2">
@@ -140,8 +139,8 @@ export default function DownloadPage() {
 
               <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] p-2">
                 <Image
-                  src="/watcher/aoe2hd-watcher-logo.png"
-                  alt="AoE2HDBets Watcher logo"
+                  src="/watcher/AoE2DE-watcher-logo.png"
+                  alt="AoE2DEWarWagers Watcher logo"
                   fill
                   className="object-contain p-2"
                 />

@@ -1,6 +1,6 @@
 export const DEFAULT_TIME_DISPLAY_MODE = "utc" as const;
-export const TIME_DISPLAY_STORAGE_KEY = "aoe2hdbets:time-display-mode";
-export const TIME_ZONE_STORAGE_KEY = "aoe2hdbets:browser-time-zone";
+export const TIME_DISPLAY_STORAGE_KEY = "AoE2DEWarWagers:time-display-mode";
+export const TIME_ZONE_STORAGE_KEY = "AoE2DEWarWagers:browser-time-zone";
 
 export const TIME_DISPLAY_MODES = [
   { id: "utc", label: "UTC" },

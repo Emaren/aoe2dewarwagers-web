@@ -145,7 +145,7 @@ export function LobbyHero({
                 WOLO Dev Rail
               </div>
               <div className="mt-1 text-sm text-white/70">
-                Local chain snapshot feeding AoE2HDBets dev mode.
+                Local chain snapshot feeding AoE2DE War Wagers dev mode.
               </div>
             </div>
             <div className="text-xs text-white/45">{formatUpdatedAt(wolo.updatedAt)}</div>

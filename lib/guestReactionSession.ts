@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 
-export const GUEST_REACTION_COOKIE_NAME = "aoe2hdbets_guest_reaction";
+export const GUEST_REACTION_COOKIE_NAME = "AoE2DEWarWagers_guest_reaction";
 
 const GUEST_REACTION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
