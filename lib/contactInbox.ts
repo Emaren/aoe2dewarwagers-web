@@ -296,7 +296,7 @@ function senderShapeFromUser(
 ): InboxSender {
   return {
     uid: user?.uid ?? "system",
-    displayName: user ? displayNameForUser(user) : "AoE2HDBets",
+    displayName: user ? displayNameForUser(user) : "AoE2DEWarWagers",
     isAdmin: Boolean(user?.isAdmin),
     badges,
   };

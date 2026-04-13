@@ -92,7 +92,7 @@ export default async function ReplayOnlyPlayerPage({
             <div className="text-xs uppercase tracking-[0.35em] text-rose-200/70">Replay-Built Warrior Page</div>
             <h1 className="text-4xl font-semibold text-white sm:text-5xl">{playerName}</h1>
             <p className="max-w-3xl text-base leading-7 text-slate-300 sm:text-lg">
-              This public page was created automatically from parsed AoE2HD replays. If this is
+              This public page was created automatically from parsed AoE2DE replays. If this is
               you, sign in with Steam, claim the name, and start building a verified tournament and
               betting identity.
             </p>

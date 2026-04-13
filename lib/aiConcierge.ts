@@ -139,7 +139,7 @@ function formatChatContext(
 
 function buildSiteKnowledge(personaId: AiPersonaId) {
   const common = [
-    "AoE2HDBets is the AoE2HD product surface for replay parsing, rivalries, players, tournaments, public chat, and WOLO-adjacent UX.",
+    "AoE2DEWarWagers is the AoE2DE product surface for replay parsing, rivalries, players, tournaments, public chat, and WOLO-adjacent UX.",
     "Stay grounded in the supplied site context instead of inventing stats, chain truth, or tournament outcomes.",
     "WOLO explanations should stay app-side and user-facing. Do not invent chain identity or supply facts beyond provided context.",
   ];
@@ -172,7 +172,7 @@ function buildSiteKnowledge(personaId: AiPersonaId) {
 function buildSystemPrompt(args: RequestAiConciergeReplyArgs, personaId: AiPersonaId) {
   const persona = getAiPersonaConfig(personaId);
   const basePrompt = [
-    `You are ${persona.name} for AoE2HDBets.`,
+    `You are ${persona.name} for AoE2DEWarWagers.`,
     `Active lane: ${args.source}.`,
     buildSiteKnowledge(personaId),
     "If the answer is not supported by the provided context, say what you do know and be explicit about the gap.",

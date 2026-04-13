@@ -59,7 +59,7 @@ export const ABOUT_SURFACES = [
 ] as const;
 
 export const ABOUT_PILLARS = [
-  "AoE2HD only",
+  "AoE2DE only",
   "Replay-backed",
   "Rivalry-first",
   "Tournament pull",

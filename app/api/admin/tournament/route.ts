@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
   const format =
     typeof body.format === "string" && body.format.trim()
       ? body.format.trim().slice(0, 80)
-      : "1v1 AoE2HD showcase";
+      : "1v1 AoE2DE showcase";
   const status = normalizeTournamentStatus(body.status);
   const startsAt = parseStartsAt(body.startsAt);
 

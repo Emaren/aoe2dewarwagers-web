@@ -105,7 +105,7 @@ export default function WoloChainExplainerPage() {
               <TonePill tone="amber">WoloChain</TonePill>
               <TonePill tone="emerald">1 validator live</TonePill>
               <TonePill tone="sky">100,000,000 fixed</TonePill>
-              <TonePill tone="slate">AoE2HD betting rail</TonePill>
+              <TonePill tone="slate">AoE2DE betting rail</TonePill>
             </div>
 
             <div className="space-y-4">
@@ -118,7 +118,7 @@ export default function WoloChainExplainerPage() {
                 No inflation games.
               </h1>
               <p className="max-w-3xl text-sm leading-7 text-slate-300 sm:text-base">
-                WOLO is the fixed-supply settlement rail for AoE2HD betting. One token. One hard cap.
+                WOLO is the fixed-supply settlement rail for AoE2DE betting. One token. One hard cap.
                 Clean transfers, clean balances, clean payout logic. Built for players who want the
                 chain to feel as sharp as the game.
               </p>
@@ -237,7 +237,7 @@ export default function WoloChainExplainerPage() {
             />
             <FeatureCard
               title="Arena"
-              body="Made for AoE2HD betting, not generic chain cosplay."
+              body="Made for AoE2DE betting, not generic chain cosplay."
               tone="sky"
             />
           </div>

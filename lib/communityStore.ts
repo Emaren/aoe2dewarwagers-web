@@ -224,7 +224,7 @@ async function buildLobbyTournament(
     title: tournament.title,
     description:
       tournament.description ||
-      "Next featured tournament for the AoE2HD lobby. Join now and use chat to find real opponents.",
+      "Next featured tournament for the AoE2DE lobby. Join now and use chat to find real opponents.",
     format: tournament.format,
     status: tournament.status as LobbyTournament["status"],
     startsAt: tournament.startsAt ? tournament.startsAt.toISOString() : null,

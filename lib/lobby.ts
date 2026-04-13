@@ -251,7 +251,7 @@ export function getFallbackTournament(viewerJoined = false): LobbyTournament {
     title: "Next Community Tournament",
     description:
       "Create the first featured tournament from the admin page, then this card becomes the live join point for the whole site.",
-    format: "1v1 AoE2HD showcase",
+    format: "1v1 AoE2DE showcase",
     status: "planning",
     startsAt: null,
     featured: false,
