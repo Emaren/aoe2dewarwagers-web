@@ -110,12 +110,16 @@ export function TournamentPanel({
               </div>
             </div>
             {isAdmin && (
-              <Link
-                href="/admin"
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  window.location.assign("/admin");
+                }}
                 className={`rounded-full border px-4 py-2 text-xs transition ${tone.secondaryButton}`}
               >
                 Edit Tournament
-              </Link>
+              </button>
             )}
           </div>
 
