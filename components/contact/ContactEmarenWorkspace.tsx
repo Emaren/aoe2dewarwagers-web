@@ -575,7 +575,7 @@ export default function ContactEmarenWorkspace() {
         <div className="text-xs uppercase tracking-[0.35em] text-amber-200/70">Contact Emaren</div>
         <h1 className="mt-3 text-3xl font-semibold text-white">Sign in to message Emaren.</h1>
         <p className="mt-4 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">
-          Steam sign-in keeps the line personal and tied to a real AoE2HDBets identity.
+          Steam sign-in keeps the line personal and tied to a real AoE2DEWarWagers identity.
         </p>
         <div className="mt-6">
           <SteamLoginButton className="rounded-full bg-amber-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200" />

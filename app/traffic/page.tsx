@@ -129,10 +129,10 @@ const SUMMARY_DEFAULTS: Summary = {
   top_paths_by_host_24h: {},
   top_suspicious_paths_by_host_24h: {},
   top_referrers_by_host_24h: {},
-  primary_host_aliases: ["aoe2hdbets.com", "www.aoe2hdbets.com"],
+  primary_host_aliases: ["AoE2DEWarWagers.com", "www.AoE2DEWarWagers.com"],
   primary_host_focus: {
-    host: "aoe2hdbets.com",
-    aliases: ["aoe2hdbets.com", "www.aoe2hdbets.com"],
+    host: "AoE2DEWarWagers.com",
+    aliases: ["AoE2DEWarWagers.com", "www.AoE2DEWarWagers.com"],
     unique_ips_24h: 0,
     unique_human_ips_24h: 0,
     unique_bot_ips_24h: 0,
@@ -544,7 +544,7 @@ export default function TrafficPage() {
             label="AoE2HD unique human visitors (24h)"
             value={formatNumber(primaryHostFocus.unique_human_ips_24h)}
             accentClass="text-emerald-300"
-            sublabel="aoe2hdbets.com + www.aoe2hdbets.com"
+            sublabel="AoE2DEWarWagers.com + www.AoE2DEWarWagers.com"
             className="border-emerald-500/20 bg-emerald-500/[0.04]"
           />
           <StatCard
@@ -605,7 +605,7 @@ export default function TrafficPage() {
             label="Postgres users"
             value={formatNumber(stats.postgres_total)}
             accentClass="text-violet-300"
-            sublabel="Users in the AoE2HDBets database"
+            sublabel="Users in the AoE2DEWarWagers database"
           />
           <StatCard
             label="Users with profile gaps"
@@ -1035,7 +1035,7 @@ export default function TrafficPage() {
 
           <Panel
             title="User profile quality"
-            subtitle="AoE2HDBets account hygiene from Postgres."
+            subtitle="AoE2DEWarWagers account hygiene from Postgres."
             className="xl:col-span-3"
           >
             <div className="mb-4 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
