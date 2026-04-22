@@ -11,6 +11,7 @@ import {
   parseStatusLabel,
   readMapName,
   readPlayedAt,
+  replayParticipantsLabel,
   shortHash,
   winnerLabel,
 } from "@/lib/gameStatsView";
@@ -110,7 +111,7 @@ export default async function GameStatsPage() {
                         <div className="mt-1 text-sm text-slate-300">
                           {players.length > 0
                             ? players.map((player) => displayPlayerName(player)).join(" vs ")
-                            : "Players unavailable"}
+                            : replayParticipantsLabel(game.players, game.parse_reason)}
                         </div>
                       </div>
                       <div className="text-right">

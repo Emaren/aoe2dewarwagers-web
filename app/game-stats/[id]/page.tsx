@@ -11,6 +11,7 @@ import {
   displayGameVersion,
   displayPlayerName,
   displayReplayFilename,
+  isUnparsedFinal,
   outcomeBadgeLabel,
   parsePlayers,
   parseStatusLabel,
@@ -213,7 +214,7 @@ export default async function GameStatsDetailPage({
                   );
                 })
               ) : (
-                "Player list unavailable"
+                isUnparsedFinal(game.parse_reason) ? "Awaiting parser support" : "Player list unavailable"
               )}
             </p>
             <div className="flex flex-wrap gap-2">
@@ -336,7 +337,13 @@ export default async function GameStatsDetailPage({
           <Panel title="Players" eyebrow="Roster">
             <div className="grid gap-4 lg:grid-cols-2">
               {players.length === 0 ? (
-                <EmptyPanel message="No player payload was stored for this replay." />
+                <EmptyPanel
+                  message={
+                    isUnparsedFinal(game.parse_reason)
+                      ? "Final replay stored. Player extraction is awaiting parser support."
+                      : "No player payload was stored for this replay."
+                  }
+                />
               ) : (
                 players.map((player, index) => {
                   const playerName = displayPlayerName(player);

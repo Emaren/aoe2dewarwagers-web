@@ -9,6 +9,12 @@ import ScheduledMatchCard, {
 } from "@/components/challenge/ScheduledMatchCard";
 import { displayName } from "@/components/lobby/utils";
 import { useUserAuth } from "@/context/UserAuthContext";
+import {
+  displayParseReason,
+  outcomeBadgeLabel,
+  replayParticipantsLabel,
+  winnerLabel,
+} from "@/lib/gameStatsView";
 import type { LiveGamesSnapshot } from "@/lib/liveGames";
 import { getTournamentMatchStatusLabel } from "@/lib/lobby";
 
@@ -374,33 +380,46 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
                   Waiting on the next completed match.
                 </div>
               ) : (
-                snapshot.recentMatches.slice(0, 4).map((match) => (
-                  <Link
-                    key={match.id}
-                    href={`/game-stats/${match.id}`}
-                    className="block rounded-2xl border border-white/10 bg-white/5 px-4 py-4 transition hover:border-white/20 hover:bg-white/7"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-white">
-                          {Array.isArray(match.players)
-                            ? match.players.map((player) => player.name).filter(Boolean).join(" vs ")
-                            : "Replay-backed result"}
+                snapshot.recentMatches.slice(0, 4).map((match) => {
+                  const outcomeLabel = outcomeBadgeLabel(match.parse_reason, match.winner);
+
+                  return (
+                    <Link
+                      key={match.id}
+                      href={`/game-stats/${match.id}`}
+                      className="block rounded-2xl border border-white/10 bg-white/5 px-4 py-4 transition hover:border-white/20 hover:bg-white/7"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-white">
+                            {replayParticipantsLabel(match.players, match.parse_reason)}
+                          </div>
+                          <div className="mt-1 text-sm text-slate-300">
+                            {typeof match.map === "string"
+                              ? match.map
+                              : match.map && typeof match.map === "object" && "name" in match.map
+                                ? String(match.map.name || "Unknown map")
+                                : "Unknown map"}
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2 text-[11px] uppercase text-slate-400">
+                            <span className="rounded-full border border-white/10 px-2.5 py-1">
+                              {displayParseReason(match.parse_reason)}
+                            </span>
+                            {outcomeLabel ? (
+                              <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2.5 py-1 text-amber-100">
+                                {outcomeLabel}
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
-                        <div className="mt-1 text-sm text-slate-300">
-                          {typeof match.map === "string"
-                            ? match.map
-                            : match.map && typeof match.map === "object" && "name" in match.map
-                              ? String(match.map.name || "Unknown map")
-                              : "Unknown map"}
+                        <div className="text-right text-xs text-slate-400">
+                          <div>{winnerLabel(match.winner, match.parse_reason)}</div>
+                          <div className="mt-1">{formatTime(match.played_on || match.timestamp)}</div>
                         </div>
                       </div>
-                      <div className="text-right text-xs text-slate-400">
-                        {formatTime(match.played_on || match.timestamp)}
-                      </div>
-                    </div>
-                  </Link>
-                ))
+                    </Link>
+                  );
+                })
               )}
             </div>
           </section>

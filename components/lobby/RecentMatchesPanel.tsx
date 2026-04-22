@@ -9,8 +9,8 @@ import {
 } from "@/components/lobby/lobbyPresentation";
 import {
   outcomeBadgeLabel,
-  parsePlayers as parseReplayPlayers,
   readMapName,
+  replayParticipantsLabel,
   winnerLabel,
 } from "@/lib/gameStatsView";
 import type { LobbyMatchRow } from "@/lib/lobby";
@@ -79,10 +79,6 @@ function MatchCard({
   viewMode: LobbyViewMode;
 }) {
   const tone = getLobbyPresentationTone(themeKey, viewMode);
-  const players = parseReplayPlayers(match.players)
-    .map((player) => String(player.name || ""))
-    .filter(Boolean);
-
   const playedAt = pickLobbyMatchPlayedAt(match);
   const outcomeLabel = outcomeBadgeLabel(match.parse_reason, match.winner);
 
@@ -95,7 +91,7 @@ function MatchCard({
         <div className="min-w-0">
           <div className="font-medium text-white">{readMapName(match.map)}</div>
           <div className="mt-1 truncate text-sm text-slate-300">
-            {players.join(" vs ")}
+            {replayParticipantsLabel(match.players, match.parse_reason)}
           </div>
         </div>
 

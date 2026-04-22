@@ -6,6 +6,7 @@ import {
 type ReplayPlayerRecord = Record<string, unknown>;
 
 const EARLY_EXIT_PARSE_REASON = "hd_early_exit_under_60s";
+export const FINAL_UNPARSED_PARSE_REASON = "watcher_final_unparsed";
 
 const HD_CIVILIZATION_NAMES: Record<number, string> = {
   1: "Britons",
@@ -148,9 +149,14 @@ export function isEarlyExitNoResult(parseReason: string | null | undefined) {
   return parseReason === EARLY_EXIT_PARSE_REASON;
 }
 
+export function isUnparsedFinal(parseReason: string | null | undefined) {
+  return parseReason === FINAL_UNPARSED_PARSE_REASON;
+}
+
 export function isResignationOutcome(parseReason: string | null | undefined) {
   if (!parseReason) return false;
   if (isEarlyExitNoResult(parseReason)) return false;
+  if (isUnparsedFinal(parseReason)) return false;
 
   return (
     parseReason.startsWith("watcher_inferred_") ||
@@ -163,6 +169,9 @@ export function winnerLabel(winner: string | null | undefined, parseReason?: str
   if (isEarlyExitNoResult(parseReason)) {
     return "No rated result";
   }
+  if (isUnparsedFinal(parseReason)) {
+    return "Awaiting parser support";
+  }
   if (winner && winner !== "Unknown") {
     return winner;
   }
@@ -174,8 +183,25 @@ export function outcomeBadgeLabel(
   winner?: string | null | undefined
 ) {
   if (isEarlyExitNoResult(parseReason)) return "Under 60s drop";
+  if (isUnparsedFinal(parseReason)) return "Unparsed final";
   if (!winner || winner === "Unknown") return null;
   return isResignationOutcome(parseReason) ? "Win by resignation" : null;
+}
+
+export function replayParticipantsLabel(
+  playersValue: unknown,
+  parseReason?: string | null | undefined
+) {
+  const names = parsePlayers(playersValue)
+    .map((player) => String(player.name || player.player_name || ""))
+    .map((name) => name.trim())
+    .filter(Boolean);
+
+  if (names.length > 0) {
+    return names.join(" vs ");
+  }
+
+  return isUnparsedFinal(parseReason) ? "Awaiting parser support" : "Players unavailable";
 }
 
 export function displayParseReason(value: string | null | undefined) {
@@ -203,6 +229,8 @@ export function displayParseReason(value: string | null | undefined) {
       return "Replay backfill";
     case "recorded_resignation_final":
       return "Recorded resignation";
+    case FINAL_UNPARSED_PARSE_REASON:
+      return "Awaiting parser support";
     case EARLY_EXIT_PARSE_REASON:
       return "Under 60s drop";
     default:
