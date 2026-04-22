@@ -452,9 +452,23 @@ function buildSessionEventLabel(session: LiveGameSession) {
   return buildWatcherEventLabel(session.state === "live" ? "Live" : "Final", session.mapName);
 }
 
+function clampDbText(value: string, max: number) {
+  if (value.length <= max) return value;
+  if (max <= 1) return value.slice(0, max);
+  return `${value.slice(0, max - 1).trimEnd()}…`;
+}
+
+function clampNullableDbText(value: string | null | undefined, max: number) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return clampDbText(trimmed, max);
+}
+
 function buildWatcherEventLabel(mode: "Live" | "Final", mapName: string | null | undefined) {
   const normalizedMapName = normalizeName(mapName);
-  return normalizedMapName ? `Watcher ${mode} • ${normalizedMapName}` : `Watcher ${mode}`;
+  const label = normalizedMapName ? `Watcher ${mode} • ${normalizedMapName}` : `Watcher ${mode}`;
+  return clampDbText(label, 120);
 }
 
 function buildSessionMarketTitle(session: LiveGameSession) {
@@ -1074,19 +1088,19 @@ function combineSettlementDetail(
     .map((warning) => warning.trim())
     .filter(Boolean);
 
+  let combined: string | null = null;
+
   if (!detail && normalizedWarnings.length === 0) {
-    return null;
+    combined = null;
+  } else if (!detail) {
+    combined = normalizedWarnings.join(" ");
+  } else if (normalizedWarnings.length === 0) {
+    combined = detail;
+  } else {
+    combined = `${detail} Warnings: ${normalizedWarnings.join(" ")}`;
   }
 
-  if (!detail) {
-    return normalizedWarnings.join(" ");
-  }
-
-  if (normalizedWarnings.length === 0) {
-    return detail;
-  }
-
-  return `${detail} Warnings: ${normalizedWarnings.join(" ")}`;
+  return clampNullableDbText(combined, 255);
 }
 
 async function settleResolvedMarketWagers(prisma: PrismaClient) {
@@ -1336,8 +1350,10 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
       validationResult,
       claimPlanList.length
     );
-    const settlementFailureCode =
-      executionResult?.failureCode || validationResult?.failureCode || null;
+    const settlementFailureCode = clampNullableDbText(
+      executionResult?.failureCode || validationResult?.failureCode || null,
+      80
+    );
     const settlementDetail = combineSettlementDetail(
       executionResult?.detail ||
       validationResult?.detail ||
@@ -1572,15 +1588,6 @@ async function reconcileDetachedWatcherMarkets(
       status: { in: OPEN_STATUSES },
       scheduledMatchId: null,
       linkedSessionKey: { not: null },
-      ...(visibleSessionKeys.size > 0
-        ? {
-            NOT: {
-              linkedSessionKey: {
-                in: [...visibleSessionKeys],
-              },
-            },
-          }
-        : {}),
     },
     select: {
       id: true,
@@ -1611,19 +1618,28 @@ async function reconcileDetachedWatcherMarkets(
   >();
 
   for (const market of markets) {
-    const sessionKey = normalizeName(market.linkedSessionKey);
-    if (!sessionKey || visibleSessionKeys.has(sessionKey)) {
+    const rawSessionKey = market.linkedSessionKey?.trim();
+    const normalizedSessionKey = rawSessionKey ? normalizeName(rawSessionKey) : "";
+    const sessionIsVisible = Boolean(
+      normalizedSessionKey && visibleSessionKeys.has(normalizedSessionKey)
+    );
+
+    if (!rawSessionKey) {
       continue;
     }
 
-    if (!finalGameIdBySessionKey.has(sessionKey)) {
+    if (!finalGameIdBySessionKey.has(rawSessionKey)) {
       finalGameIdBySessionKey.set(
-        sessionKey,
-        await resolveFinalGameStatsIdForSessionKey(prisma, sessionKey)
+        rawSessionKey,
+        await resolveFinalGameStatsIdForSessionKey(prisma, rawSessionKey)
       );
     }
 
-    const finalGameId = finalGameIdBySessionKey.get(sessionKey) ?? null;
+    const finalGameId = finalGameIdBySessionKey.get(rawSessionKey) ?? null;
+    if (sessionIsVisible && !finalGameId) {
+      continue;
+    }
+
     if (finalGameId && !finalGameById.has(finalGameId)) {
       finalGameById.set(
         finalGameId,
@@ -1644,12 +1660,21 @@ async function reconcileDetachedWatcherMarkets(
 
   await Promise.all(
     markets.map(async (market) => {
-      const sessionKey = normalizeName(market.linkedSessionKey);
-      if (!sessionKey || visibleSessionKeys.has(sessionKey)) {
+      const rawSessionKey = market.linkedSessionKey?.trim();
+      const normalizedSessionKey = rawSessionKey ? normalizeName(rawSessionKey) : "";
+      const sessionIsVisible = Boolean(
+        normalizedSessionKey && visibleSessionKeys.has(normalizedSessionKey)
+      );
+
+      if (!rawSessionKey) {
         return;
       }
 
-      const finalGameId = finalGameIdBySessionKey.get(sessionKey) ?? null;
+      const finalGameId = finalGameIdBySessionKey.get(rawSessionKey) ?? null;
+      if (sessionIsVisible && !finalGameId) {
+        return;
+      }
+
       const finalGame = finalGameId ? finalGameById.get(finalGameId) ?? null : null;
       const winnerSide = finalGame
         ? inferWinnerSideFromGameStats(market, finalGame)
@@ -1705,6 +1730,7 @@ export async function ensureBetMarkets(prisma: PrismaClient) {
     })
   );
 
+  await reconcileBetMarketStatsLinks(prisma);
   await reconcileDetachedWatcherMarkets(prisma, visibleSessionKeys);
 
   await prisma.betMarket.updateMany({
@@ -1753,7 +1779,6 @@ export async function ensureBetMarkets(prisma: PrismaClient) {
   });
 
   await settleResolvedMarketWagers(prisma);
-  await reconcileBetMarketStatsLinks(prisma);
   await settleFounderBonuses(prisma);
 }
 
