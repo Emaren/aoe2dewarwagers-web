@@ -91,6 +91,68 @@ psql "$DB_URL" -P pager=off -x -c "select now();"
 '
 ```
 
+## Quick Final State Checks
+
+Use this to classify the three final replay states quickly:
+
+```bash
+sudo bash -lc '
+set -a
+. /etc/aoe2dewarwagers/aoe2dewarwagers-api.env
+set +a
+DB_URL="${DATABASE_URL/postgresql+asyncpg/postgresql}"
+psql "$DB_URL" -P pager=off -x -c "
+select id, replay_hash, original_filename, parse_reason, winner,
+       jsonb_array_length(players::jsonb) as players_count,
+       key_events::jsonb->>$$player_extraction_source$$ as player_source,
+       key_events::jsonb->>$$trusted_player_data$$ as trusted_player_data,
+       key_events::jsonb->>$$replay_parser_trust$$ as replay_parser_trust,
+       key_events::jsonb->>$$bet_arming_eligible$$ as bet_arming_eligible,
+       key_events::jsonb->$$watcher_metadata$$->$$local_player$$ as local_player,
+       key_events::jsonb->$$watcher_metadata$$->$$game_version$$ as watcher_game_version
+from game_stats
+where is_final = true
+order by coalesce(played_on, timestamp, created_at) desc
+limit 20;
+"
+'
+```
+
+Interpretation:
+
+- `watcher_final_unparsed`: parser-blind final with no useful watcher enrichment. Expect `winner = Unknown`, `players_count = 0`, `player_source = no_players`, and no linked bet market.
+- `watcher_final_metadata`: parser-blind final enriched by watcher runtime context. Expect `watcher_metadata.local_player` and/or `watcher_metadata.game_version`, `replay_parser_trust = false`, and `bet_arming_eligible = false`.
+- Parser-trusted final: any final row with parser-trusted player data. Expect `parse_reason` outside `watcher_final_unparsed` / `watcher_final_metadata`, `players_count >= 2`, `player_source` not `no_players`, and `replay_parser_trust` not `false`.
+
+API shortcut for a known hash:
+
+```bash
+python3 - <<'PY'
+import json
+import subprocess
+
+hash_value = "REPLAY_HASH"
+data = json.loads(subprocess.check_output(
+    ["curl", "-fsS", "https://api-prodn.aoe2dewarwagers.com/api/game_stats"],
+    text=True,
+))
+row = next((item for item in data if item.get("replay_hash") == hash_value), None)
+events = (row or {}).get("key_events") or {}
+metadata = events.get("watcher_metadata") or {}
+print({
+    "found": bool(row),
+    "id": row and row.get("id"),
+    "parse_reason": row and row.get("parse_reason"),
+    "players_count": len(row.get("players") if isinstance(row.get("players"), list) else []),
+    "player_source": events.get("player_extraction_source"),
+    "replay_parser_trust": events.get("replay_parser_trust"),
+    "bet_arming_eligible": events.get("bet_arming_eligible"),
+    "local_player": metadata.get("local_player"),
+    "watcher_game_version": metadata.get("game_version"),
+})
+PY
+```
+
 ## Smoke: Unparsed Final Persistence
 
 Reference live sample as of April 22, 2026:
