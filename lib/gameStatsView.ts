@@ -7,6 +7,7 @@ type ReplayPlayerRecord = Record<string, unknown>;
 
 const EARLY_EXIT_PARSE_REASON = "hd_early_exit_under_60s";
 export const FINAL_UNPARSED_PARSE_REASON = "watcher_final_unparsed";
+export const FINAL_METADATA_PARSE_REASON = "watcher_final_metadata";
 
 const HD_CIVILIZATION_NAMES: Record<number, string> = {
   1: "Britons",
@@ -153,10 +154,15 @@ export function isUnparsedFinal(parseReason: string | null | undefined) {
   return parseReason === FINAL_UNPARSED_PARSE_REASON;
 }
 
+export function isWatcherFinalMetadata(parseReason: string | null | undefined) {
+  return parseReason === FINAL_METADATA_PARSE_REASON;
+}
+
 export function isResignationOutcome(parseReason: string | null | undefined) {
   if (!parseReason) return false;
   if (isEarlyExitNoResult(parseReason)) return false;
   if (isUnparsedFinal(parseReason)) return false;
+  if (isWatcherFinalMetadata(parseReason)) return false;
 
   return (
     parseReason.startsWith("watcher_inferred_") ||
@@ -172,6 +178,9 @@ export function winnerLabel(winner: string | null | undefined, parseReason?: str
   if (isUnparsedFinal(parseReason)) {
     return "Awaiting parser support";
   }
+  if (isWatcherFinalMetadata(parseReason) && (!winner || winner === "Unknown")) {
+    return "Winner unverified";
+  }
   if (winner && winner !== "Unknown") {
     return winner;
   }
@@ -184,6 +193,7 @@ export function outcomeBadgeLabel(
 ) {
   if (isEarlyExitNoResult(parseReason)) return "Under 60s drop";
   if (isUnparsedFinal(parseReason)) return "Unparsed final";
+  if (isWatcherFinalMetadata(parseReason)) return "Watcher metadata";
   if (!winner || winner === "Unknown") return null;
   return isResignationOutcome(parseReason) ? "Win by resignation" : null;
 }
@@ -201,7 +211,9 @@ export function replayParticipantsLabel(
     return names.join(" vs ");
   }
 
-  return isUnparsedFinal(parseReason) ? "Awaiting parser support" : "Players unavailable";
+  if (isUnparsedFinal(parseReason)) return "Awaiting parser support";
+  if (isWatcherFinalMetadata(parseReason)) return "Watcher metadata received";
+  return "Players unavailable";
 }
 
 export function displayParseReason(value: string | null | undefined) {
@@ -231,6 +243,8 @@ export function displayParseReason(value: string | null | undefined) {
       return "Recorded resignation";
     case FINAL_UNPARSED_PARSE_REASON:
       return "Awaiting parser support";
+    case FINAL_METADATA_PARSE_REASON:
+      return "Watcher metadata";
     case EARLY_EXIT_PARSE_REASON:
       return "Under 60s drop";
     default:

@@ -3,6 +3,8 @@ import path from "node:path";
 import { PrismaClient } from "@/lib/generated/prisma";
 
 const SUPERSEDED_PARSE_REASON = "superseded_by_later_upload";
+const WATCHER_FINAL_METADATA_PARSE_REASON = "watcher_final_metadata";
+const WATCHER_FINAL_UNPARSED_PARSE_REASON = "watcher_final_unparsed";
 
 export type LiveReplayPlayerRecord = Record<string, unknown>;
 
@@ -312,7 +314,8 @@ function serializeGame(row: ReplayRow) {
 
 export async function resolveFinalGameStatsIdForSessionKey(
   prisma: PrismaClient,
-  rawSessionKey: string
+  rawSessionKey: string,
+  options: { requireBetEligible?: boolean } = {}
 ) {
   const sessionCandidates = normalizeSessionCandidates(rawSessionKey);
   if (sessionCandidates.length === 0) {
@@ -323,6 +326,17 @@ export async function resolveFinalGameStatsIdForSessionKey(
     where: {
       ...buildSessionWhere(sessionCandidates),
       is_final: true,
+      ...(options.requireBetEligible
+        ? {
+            parse_reason: {
+              notIn: [
+                SUPERSEDED_PARSE_REASON,
+                WATCHER_FINAL_METADATA_PARSE_REASON,
+                WATCHER_FINAL_UNPARSED_PARSE_REASON,
+              ],
+            },
+          }
+        : {}),
     },
     orderBy: [{ timestamp: "desc" }, { createdAt: "desc" }, { id: "desc" }],
     select: {

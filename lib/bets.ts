@@ -519,6 +519,8 @@ function buildSessionMarketSeed(
   index: number,
   featured: boolean
 ): MarketSeed | null {
+  if (!session.betArmingEligible) return null;
+
   const sides = describeSessionSides(session);
   if (!sides) return null;
 
@@ -1538,7 +1540,9 @@ async function reconcileBetMarketStatsLinks(prisma: PrismaClient) {
     if (!finalGameIdBySessionKey.has(sessionKey)) {
       finalGameIdBySessionKey.set(
         sessionKey,
-        await resolveFinalGameStatsIdForSessionKey(prisma, sessionKey)
+        await resolveFinalGameStatsIdForSessionKey(prisma, sessionKey, {
+          requireBetEligible: true,
+        })
       );
     }
   }
@@ -1619,7 +1623,9 @@ async function reconcileDetachedWatcherMarkets(
     if (!finalGameIdBySessionKey.has(sessionKey)) {
       finalGameIdBySessionKey.set(
         sessionKey,
-        await resolveFinalGameStatsIdForSessionKey(prisma, sessionKey)
+        await resolveFinalGameStatsIdForSessionKey(prisma, sessionKey, {
+          requireBetEligible: true,
+        })
       );
     }
 
@@ -2015,6 +2021,9 @@ async function loadRecentSettledResults(prisma: PrismaClient): Promise<BetSettle
     where: {
       is_final: true,
       winner: { not: null },
+      parse_reason: {
+        notIn: ["watcher_final_metadata", "watcher_final_unparsed"],
+      },
     },
     orderBy: [{ played_on: "desc" }, { timestamp: "desc" }, { id: "desc" }],
     take: 4,
