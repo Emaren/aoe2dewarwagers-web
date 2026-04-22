@@ -91,7 +91,7 @@ function MatchCard({
         <div className="min-w-0">
           <div className="font-medium text-white">{readMapName(match.map)}</div>
           <div className="mt-1 truncate text-sm text-slate-300">
-            {replayParticipantsLabel(match.players, match.parse_reason)}
+            {replayParticipantsLabel(match.players, match.parse_reason, match.key_events)}
           </div>
         </div>
 

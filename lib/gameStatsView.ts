@@ -81,6 +81,71 @@ export function readMapRecord(value: unknown) {
   return {};
 }
 
+function readRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return {};
+    }
+  }
+
+  return {};
+}
+
+export function readWatcherMetadata(keyEventsValue: unknown) {
+  const keyEvents = readRecord(keyEventsValue);
+  return readRecord(keyEvents.watcher_metadata);
+}
+
+export function watcherLocalPlayerLabel(keyEventsValue: unknown) {
+  const watcherMetadata = readWatcherMetadata(keyEventsValue);
+  const localPlayer = readRecord(watcherMetadata.local_player);
+  const personaName = typeof localPlayer.persona_name === "string" ? localPlayer.persona_name.trim() : "";
+  const steam64 = typeof localPlayer.steam64 === "string" ? localPlayer.steam64.trim() : "";
+
+  return personaName || steam64 || null;
+}
+
+export function watcherMetadataContextLabels(keyEventsValue: unknown) {
+  const watcherMetadata = readWatcherMetadata(keyEventsValue);
+  const labels: string[] = [];
+  const localPlayer = watcherLocalPlayerLabel(keyEventsValue);
+  const gameVersion = readRecord(watcherMetadata.game_version);
+  const deRuntime = readRecord(watcherMetadata.de_runtime);
+  const candidateLobbyIds = Array.isArray(watcherMetadata.candidate_lobby_ids)
+    ? watcherMetadata.candidate_lobby_ids
+    : [];
+
+  if (localPlayer) {
+    labels.push(`Local player: ${localPlayer}`);
+  }
+
+  const versionValue = typeof gameVersion.value === "string" ? gameVersion.value.trim() : "";
+  if (versionValue) {
+    labels.push(`DE ${versionValue}`);
+  }
+
+  const playerSessionId =
+    typeof deRuntime.player_session_id === "string" ? deRuntime.player_session_id.trim() : "";
+  if (playerSessionId) {
+    labels.push("DE session observed");
+  }
+
+  if (candidateLobbyIds.length > 0) {
+    labels.push(`${candidateLobbyIds.length} candidate lobby ID${candidateLobbyIds.length === 1 ? "" : "s"}`);
+  }
+
+  return labels;
+}
+
 export function readMapName(value: unknown) {
   const record = readMapRecord(value);
   const name = record.name;
@@ -200,7 +265,8 @@ export function outcomeBadgeLabel(
 
 export function replayParticipantsLabel(
   playersValue: unknown,
-  parseReason?: string | null | undefined
+  parseReason?: string | null | undefined,
+  keyEventsValue?: unknown
 ) {
   const names = parsePlayers(playersValue)
     .map((player) => String(player.name || player.player_name || ""))
@@ -212,7 +278,10 @@ export function replayParticipantsLabel(
   }
 
   if (isUnparsedFinal(parseReason)) return "Awaiting parser support";
-  if (isWatcherFinalMetadata(parseReason)) return "Watcher metadata received";
+  if (isWatcherFinalMetadata(parseReason)) {
+    const localPlayer = watcherLocalPlayerLabel(keyEventsValue);
+    return localPlayer ? `Local player observed: ${localPlayer}` : "Watcher metadata received";
+  }
   return "Players unavailable";
 }
 

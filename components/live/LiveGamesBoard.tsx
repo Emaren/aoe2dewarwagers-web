@@ -392,7 +392,7 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-white">
-                            {replayParticipantsLabel(match.players, match.parse_reason)}
+                            {replayParticipantsLabel(match.players, match.parse_reason, match.key_events)}
                           </div>
                           <div className="mt-1 text-sm text-slate-300">
                             {typeof match.map === "string"

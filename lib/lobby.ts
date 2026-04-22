@@ -31,6 +31,7 @@ export type LobbyMatchRow = {
   played_on: string | null;
   timestamp: string | null;
   parse_reason?: string | null;
+  key_events?: unknown;
   original_filename?: string | null;
   replay_file?: string | null;
 };

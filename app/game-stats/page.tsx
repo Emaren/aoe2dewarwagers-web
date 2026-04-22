@@ -13,6 +13,7 @@ import {
   readPlayedAt,
   replayParticipantsLabel,
   shortHash,
+  watcherMetadataContextLabels,
   winnerLabel,
 } from "@/lib/gameStatsView";
 
@@ -98,6 +99,7 @@ export default async function GameStatsPage() {
                 const players = parsePlayers(game.players);
                 const playedAt = readPlayedAt(game);
                 const outcomeLabel = outcomeBadgeLabel(game.parse_reason, game.winner);
+                const watcherContextLabels = watcherMetadataContextLabels(game.key_events);
 
                 return (
                   <Link
@@ -111,7 +113,7 @@ export default async function GameStatsPage() {
                         <div className="mt-1 text-sm text-slate-300">
                           {players.length > 0
                             ? players.map((player) => displayPlayerName(player)).join(" vs ")
-                            : replayParticipantsLabel(game.players, game.parse_reason)}
+                            : replayParticipantsLabel(game.players, game.parse_reason, game.key_events)}
                         </div>
                       </div>
                       <div className="text-right">
@@ -134,6 +136,9 @@ export default async function GameStatsPage() {
                       {game.user ? (
                         <Tag>{game.user.inGameName || game.user.steamPersonaName || game.user.uid}</Tag>
                       ) : null}
+                      {watcherContextLabels.slice(0, 2).map((label) => (
+                        <Tag key={label}>{label}</Tag>
+                      ))}
                     </div>
 
                     {playedAt ? (
