@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { type ReactNode } from "react";
 import {
   getLobbyPresentationTone,
   type LobbyThemeKey,
   type LobbyViewMode,
 } from "@/components/lobby/lobbyPresentation";
 import {
+  outcomeBadgeLabel,
   parsePlayers as parseReplayPlayers,
   readMapName,
   winnerLabel,
@@ -82,6 +84,7 @@ function MatchCard({
     .filter(Boolean);
 
   const playedAt = pickLobbyMatchPlayedAt(match);
+  const outcomeLabel = outcomeBadgeLabel(match.parse_reason, match.winner);
 
   return (
     <Link
@@ -96,10 +99,15 @@ function MatchCard({
           </div>
         </div>
 
-        <div className="shrink-0 text-right">
+        <div className="shrink-0 space-y-2 text-right">
           <div className="text-xs uppercase tracking-[0.25em] text-slate-400">
             {winnerLabel(match.winner, match.parse_reason)}
           </div>
+          {outcomeLabel ? (
+            <ResultTypePill toneClassName={tone.resultPill}>
+              {outcomeLabel}
+            </ResultTypePill>
+          ) : null}
         </div>
       </div>
 
@@ -109,5 +117,21 @@ function MatchCard({
         </div>
       )}
     </Link>
+  );
+}
+
+function ResultTypePill({
+  children,
+  toneClassName,
+}: {
+  children: ReactNode;
+  toneClassName: string;
+}) {
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.18em] ${toneClassName}`}
+    >
+      {children}
+    </span>
   );
 }
