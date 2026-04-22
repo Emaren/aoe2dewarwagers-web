@@ -61,7 +61,7 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
       "Smoothest Windows path. Installs cleanly, creates shortcuts, and keeps the first run obvious.",
     downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2DEWarWagers Watcher Setup ${version}.exe`)}`)},
     trackedHref: "/download/watcher/windows-installer",
-    primary: true,
+    primary: false,
     featuredOnDownloadPage: true,
   },
   {
@@ -91,7 +91,7 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
       "Best Mac install path. Drag in, pair once, and keep it open while AoE2DE runs under macOS or CrossOver.",
     downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2DEWarWagers Watcher-${version}-arm64.dmg`)}`)},
     trackedHref: "/download/watcher/mac-dmg",
-    primary: false,
+    primary: true,
     featuredOnDownloadPage: true,
   },
   {
@@ -164,7 +164,7 @@ async function main() {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const appDir = path.resolve(scriptDir, "..");
   const repoDir = path.resolve(appDir, "..");
-  const watcherDir = path.join(repoDir, "aoe2-watcher");
+  const watcherDir = path.join(repoDir, "aoe2de-watcher");
   const watcherPackagePath = path.join(watcherDir, "package.json");
   const releaseModulePath = path.join(appDir, "lib", "watcherRelease.ts");
   const downloadsDir = path.join(appDir, "public", "downloads");

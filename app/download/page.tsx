@@ -139,7 +139,7 @@ export default function DownloadPage() {
 
               <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] p-2">
                 <Image
-                  src="/watcher/AoE2DE-watcher-logo.png"
+                  src="/watcher/AoE2DEWarWagers-watcher-logo.png"
                   alt="AoE2DEWarWagers Watcher logo"
                   fill
                   className="object-contain p-2"
