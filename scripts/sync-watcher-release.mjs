@@ -155,9 +155,17 @@ async function ensureFileExists(filePath) {
   await fs.access(filePath);
 }
 
-async function copyArtifact(sourcePath, targetPath) {
-  await ensureFileExists(sourcePath);
+async function copyArtifact(sourcePath, targetPath, { required = false } = {}) {
+  try {
+    await ensureFileExists(sourcePath);
+  } catch (error) {
+    if (required) throw error;
+    process.stdout.write(`Skipping missing optional watcher artifact: ${sourcePath}\n`);
+    return false;
+  }
+
   await fs.copyFile(sourcePath, targetPath);
+  return true;
 }
 
 async function main() {
@@ -202,18 +210,22 @@ async function main() {
     {
       source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg`),
       target: path.join(downloadsDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg`),
+      required: true,
     },
     {
       source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg.blockmap`),
       target: path.join(downloadsDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg.blockmap`),
+      required: true,
     },
     {
       source: path.join(watcherDistDir, "latest-mac.yml"),
       target: path.join(downloadsDir, "latest-mac.yml"),
+      required: true,
     },
     {
       source: path.join(watcherDistDir, "AoE2DEWarWagers-watcher-direct.zip"),
       target: path.join(downloadsDir, "AoE2DEWarWagers-watcher-direct.zip"),
+      required: true,
     },
     {
       source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher Setup ${version}.exe`),
@@ -238,7 +250,7 @@ async function main() {
   ];
 
   for (const artifact of artifactCopies) {
-    await copyArtifact(artifact.source, artifact.target);
+    await copyArtifact(artifact.source, artifact.target, { required: artifact.required });
   }
 
   process.stdout.write(
