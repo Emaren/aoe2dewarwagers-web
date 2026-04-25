@@ -45,14 +45,19 @@ function displayNameForUser(user: {
   return user.inGameName || user.steamPersonaName || user.uid;
 }
 
-function normalizeAiReply(value: string, source: RequestAiConciergeReplyArgs["source"]) {
+function normalizeAiReply(
+  value: string,
+  source: RequestAiConciergeReplyArgs["source"],
+) {
   const collapsed = value.replace(/\r\n?/g, "\n").trim();
   if (!collapsed) {
     return "";
   }
 
   if (source === "lobby_public") {
-    return collapsed.replace(/\s+/g, " ").slice(0, AI_LOBBY_PUBLIC_REPLY_MAX_CHARS);
+    return collapsed
+      .replace(/\s+/g, " ")
+      .slice(0, AI_LOBBY_PUBLIC_REPLY_MAX_CHARS);
   }
 
   return collapsed.slice(0, AI_PRIVATE_REPLY_MAX_CHARS);
@@ -76,7 +81,7 @@ async function loadRecentMatchesForAi(): Promise<LobbyMatchRow[]> {
 }
 
 function formatLeaderboardContext(
-  leaderboard: Awaited<ReturnType<typeof loadLobbyLeaderboard>>
+  leaderboard: Awaited<ReturnType<typeof loadLobbyLeaderboard>>,
 ) {
   if (leaderboard.entries.length === 0) {
     return "Leaderboard: no ranked entries loaded right now.";
@@ -86,7 +91,7 @@ function formatLeaderboardContext(
     .slice(0, 8)
     .map(
       (entry) =>
-        `${entry.rank}. ${entry.name} (${entry.primaryRatingLabel}: ${entry.primaryRating ?? "n/a"}, ${entry.wins}-${entry.losses})`
+        `${entry.rank}. ${entry.name} (${entry.primaryRatingLabel}: ${entry.primaryRating ?? "n/a"}, ${entry.wins}-${entry.losses})`,
     )
     .join("\n");
 
@@ -122,7 +127,7 @@ function formatRecentMatchesContext(matches: LobbyMatchRow[]) {
 
 function formatChatContext(
   messages: Awaited<ReturnType<typeof getLobbyMessages>>,
-  viewerUid: string
+  viewerUid: string,
 ) {
   if (messages.length === 0) {
     return "Lobby chat: no recent messages.";
@@ -131,11 +136,121 @@ function formatChatContext(
   return [
     "Recent lobby chat:",
     ...messages.slice(-16).map((message) => {
-      const prefix = message.user.uid === viewerUid ? "viewer" : displayNameForUser(message.user);
+      const prefix =
+        message.user.uid === viewerUid
+          ? "viewer"
+          : displayNameForUser(message.user);
       return `- ${prefix}: ${message.body}`;
     }),
   ].join("\n");
 }
+
+// BEGIN AI PEOPLE CONTEXT
+type AiPeopleContext = {
+  claimedHumanCount: number;
+  aiProfileCount: number;
+  claimedProfileCount: number;
+  claimableIdentityCount: number;
+  aiProfiles: string[];
+  recentHumans: string[];
+};
+
+function displayNameForPeopleUser(user: {
+  uid: string;
+  inGameName: string | null;
+  steamPersonaName: string | null;
+}) {
+  return user.inGameName || user.steamPersonaName || user.uid;
+}
+
+function isAiSystemPeopleUser(user: {
+  uid: string;
+  inGameName: string | null;
+  steamPersonaName: string | null;
+}) {
+  const label = displayNameForPeopleUser(user).toLowerCase();
+
+  return (
+    user.uid.startsWith("aoe2de_ai_") ||
+    user.uid.startsWith("aoe2hd_ai_") ||
+    label === "grimer" ||
+    label === "the ai scribe"
+  );
+}
+
+async function loadAiPeopleContext(
+  prisma: PrismaClient,
+): Promise<AiPeopleContext | null> {
+  try {
+    const [claimedUsers, claimableClaims] = await Promise.all([
+      prisma.user.findMany({
+        where: {
+          verified: true,
+        },
+        orderBy: [{ id: "desc" }],
+        select: {
+          uid: true,
+          inGameName: true,
+          steamPersonaName: true,
+        },
+      }),
+      prisma.pendingWoloClaim.findMany({
+        where: {
+          status: "pending",
+          claimedByUserId: null,
+          rescindedAt: null,
+        },
+        distinct: ["normalizedPlayerName"],
+        select: {
+          normalizedPlayerName: true,
+          displayPlayerName: true,
+        },
+      }),
+    ]);
+
+    const aiProfiles = claimedUsers
+      .filter((user) => isAiSystemPeopleUser(user))
+      .map((user) => displayNameForPeopleUser(user));
+
+    const humanProfiles = claimedUsers.filter(
+      (user) => !isAiSystemPeopleUser(user),
+    );
+
+    return {
+      claimedHumanCount: humanProfiles.length,
+      aiProfileCount: aiProfiles.length,
+      claimedProfileCount: claimedUsers.length,
+      claimableIdentityCount: claimableClaims.length,
+      aiProfiles,
+      recentHumans: humanProfiles
+        .slice(0, 12)
+        .map((user) => displayNameForPeopleUser(user)),
+    };
+  } catch (error) {
+    console.warn("Failed to load AI people context:", error);
+    return null;
+  }
+}
+
+function formatPeopleContext(context: AiPeopleContext | null) {
+  if (!context) {
+    return "Site identity summary: unavailable for this reply.";
+  }
+
+  return [
+    "Site identity summary, use this first for people/user/player count questions:",
+    `Board entities total: ${context.claimedProfileCount + context.claimableIdentityCount}.`,
+    `Claimed/logged-in profiles total: ${context.claimedProfileCount}.`,
+    `Human claimed/logged-in profiles: ${context.claimedHumanCount}.`,
+    `AI system profiles: ${context.aiProfileCount}${context.aiProfiles.length ? ` (${context.aiProfiles.join(", ")})` : ""}.`,
+    `Unclaimed/claimable replay identities: ${context.claimableIdentityCount}.`,
+    context.recentHumans.length
+      ? `Recent human profiles: ${context.recentHumans.join(", ")}.`
+      : "Recent human profiles: none.",
+    "Important: AI system profiles are not human users. Claimable replay identities are not logged-in humans.",
+  ].join("\n");
+}
+// END AI PEOPLE CONTEXT
 
 function buildSiteKnowledge(personaId: AiPersonaId) {
   const common = [
@@ -169,7 +284,10 @@ function buildSiteKnowledge(personaId: AiPersonaId) {
   ].join("\n");
 }
 
-function buildSystemPrompt(args: RequestAiConciergeReplyArgs, personaId: AiPersonaId) {
+function buildSystemPrompt(
+  args: RequestAiConciergeReplyArgs,
+  personaId: AiPersonaId,
+) {
   const persona = getAiPersonaConfig(personaId);
   const basePrompt = [
     `You are ${persona.name} for AoE2DEWarWagers.`,
@@ -177,6 +295,7 @@ function buildSystemPrompt(args: RequestAiConciergeReplyArgs, personaId: AiPerso
     buildSiteKnowledge(personaId),
     "If the answer is not supported by the provided context, say what you do know and be explicit about the gap.",
     "Do not mention prompt files, providers, internal tools, or hidden system details.",
+    "For human/user/player count questions, use Site identity summary first. Never count AI persona/system accounts as human users.",
     "Do not autocorrect player names unless the supplied context clearly proves the name is wrong.",
   ];
 
@@ -280,13 +399,16 @@ function buildUserPrompt(
     chatMessages: Awaited<ReturnType<typeof getLobbyMessages>>;
     leaderboard: Awaited<ReturnType<typeof loadLobbyLeaderboard>>;
     recentMatches: LobbyMatchRow[];
-  }
+    peopleContext: AiPeopleContext | null;
+  },
 ) {
   const threadHistory =
     args.conversationHistory && args.conversationHistory.length > 0
       ? [
           "Recent private AI thread history:",
-          ...args.conversationHistory.slice(-10).map((turn) => `- ${turn.role}: ${turn.content}`),
+          ...args.conversationHistory
+            .slice(-10)
+            .map((turn) => `- ${turn.role}: ${turn.content}`),
         ].join("\n")
       : "Recent private AI thread history: none.";
 
@@ -297,6 +419,7 @@ function buildUserPrompt(
     formatChatContext(context.chatMessages, args.viewer.uid),
     formatLeaderboardContext(context.leaderboard),
     formatRecentMatchesContext(context.recentMatches),
+    formatPeopleContext(context.peopleContext),
     threadHistory,
     `Question or message to answer:\n${args.userMessage}`,
   ].join("\n\n");
@@ -304,7 +427,7 @@ function buildUserPrompt(
 
 export async function ensureAiPersonaUser(
   prisma: PrismaClient,
-  personaId: AiPersonaId = "scribe"
+  personaId: AiPersonaId = "scribe",
 ) {
   const persona = getAiPersonaConfig(personaId);
 
@@ -343,19 +466,24 @@ export async function ensureAiConciergeUser(prisma: PrismaClient) {
   return ensureAiPersonaUser(prisma, "scribe");
 }
 
-export async function requestAiConciergeReply(args: RequestAiConciergeReplyArgs) {
+export async function requestAiConciergeReply(
+  args: RequestAiConciergeReplyArgs,
+) {
   const personaId = args.personaId ?? "scribe";
   const persona = getAiPersonaConfig(personaId);
   const requestedModel: AiModelId =
-    (args.requestedModel as AiModelId | null | undefined) || persona.requestedModel;
+    (args.requestedModel as AiModelId | null | undefined) ||
+    persona.requestedModel;
 
-  const [chatMessages, leaderboard, recentMatches] = await Promise.all([
-    getLobbyMessages(args.prisma, args.roomSlug || LOBBY_ROOM_SLUG, 24, {
-      uid: args.viewer.uid,
-    }),
-    loadLobbyLeaderboard(args.prisma),
-    loadRecentMatchesForAi(),
-  ]);
+  const [chatMessages, leaderboard, recentMatches, peopleContext] =
+    await Promise.all([
+      getLobbyMessages(args.prisma, args.roomSlug || LOBBY_ROOM_SLUG, 24, {
+        uid: args.viewer.uid,
+      }),
+      loadLobbyLeaderboard(args.prisma),
+      loadRecentMatchesForAi(),
+      loadAiPeopleContext(args.prisma),
+    ]);
 
   const response = await fetch(LLAMA_CHAT_GATEWAY_URL, {
     method: "POST",
@@ -375,6 +503,7 @@ export async function requestAiConciergeReply(args: RequestAiConciergeReplyArgs)
             chatMessages,
             leaderboard,
             recentMatches,
+            peopleContext,
           }),
         },
       ],
@@ -388,7 +517,9 @@ export async function requestAiConciergeReply(args: RequestAiConciergeReplyArgs)
   };
 
   if (!response.ok) {
-    throw new Error(payload.error || `${persona.name} is unavailable (${response.status}).`);
+    throw new Error(
+      payload.error || `${persona.name} is unavailable (${response.status}).`,
+    );
   }
 
   const reply = normalizeAiReply(payload.text || "", args.source);
