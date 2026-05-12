@@ -129,10 +129,10 @@ const SUMMARY_DEFAULTS: Summary = {
   top_paths_by_host_24h: {},
   top_suspicious_paths_by_host_24h: {},
   top_referrers_by_host_24h: {},
-  primary_host_aliases: ["AoE2DEWarWagers.com", "www.AoE2DEWarWagers.com"],
+  primary_host_aliases: ["aoe2dewarwagers.com", "www.aoe2dewarwagers.com"],
   primary_host_focus: {
-    host: "AoE2DEWarWagers.com",
-    aliases: ["AoE2DEWarWagers.com", "www.AoE2DEWarWagers.com"],
+    host: "aoe2dewarwagers.com",
+    aliases: ["aoe2dewarwagers.com", "www.aoe2dewarwagers.com"],
     unique_ips_24h: 0,
     unique_human_ips_24h: 0,
     unique_bot_ips_24h: 0,
@@ -541,17 +541,17 @@ export default function TrafficPage() {
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
           <StatCard
-            label="AoE2HD unique human visitors (24h)"
+            label="AoE2DE unique human visitors (24h)"
             value={formatNumber(primaryHostFocus.unique_human_ips_24h)}
             accentClass="text-emerald-300"
-            sublabel="AoE2DEWarWagers.com + www.AoE2DEWarWagers.com"
+            sublabel="aoe2dewarwagers.com + www.aoe2dewarwagers.com"
             className="border-emerald-500/20 bg-emerald-500/[0.04]"
           />
           <StatCard
-            label="AoE2HD total requests (24h)"
+            label="AoE2DE total requests (24h)"
             value={formatNumber(primaryHostFocus.total_requests_24h)}
             accentClass="text-cyan-300"
-            sublabel="All request volume to the AoE2HD host aliases"
+            sublabel="All request volume to the AoE2DE host aliases"
           />
           <StatCard
             label="Shared VPS human-like IPs (24h)"
@@ -624,13 +624,13 @@ export default function TrafficPage() {
               label={`${primaryHostFocus.host} unique human visitors`}
               value={formatNumber(primaryHostFocus.unique_human_ips_24h)}
               accentClass="text-emerald-300"
-              sublabel="Unique human-looking IPs to your main AoE2HD site"
+              sublabel="Unique human-looking IPs to your main AoE2DE site"
             />
             <StatCard
               label={`${primaryHostFocus.host} all unique visitors`}
               value={formatNumber(primaryHostFocus.unique_ips_24h)}
               accentClass="text-sky-300"
-              sublabel="Unique IPs of every category for the AoE2HD host aliases"
+              sublabel="Unique IPs of every category for the AoE2DE host aliases"
             />
             <StatCard
               label={`${primaryHostFocus.host} human requests`}
@@ -642,7 +642,7 @@ export default function TrafficPage() {
               label={`${primaryHostFocus.host} total requests`}
               value={formatNumber(primaryHostFocus.total_requests_24h)}
               accentClass="text-fuchsia-300"
-              sublabel="All request volume for the AoE2HD host aliases"
+              sublabel="All request volume for the AoE2DE host aliases"
             />
             <StatCard
               label={`${primaryHostFocus.host} suspicious requests`}

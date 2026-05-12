@@ -66,7 +66,7 @@ CREATE TABLE "tournaments" (
     "slug" VARCHAR(80) NOT NULL,
     "title" VARCHAR(120) NOT NULL,
     "description" TEXT,
-    "format" VARCHAR(80) NOT NULL DEFAULT '1v1 AoE2HD showcase',
+    "format" VARCHAR(80) NOT NULL DEFAULT '1v1 AoE2DE showcase',
     "status" VARCHAR(20) NOT NULL DEFAULT 'planning',
     "starts_at" TIMESTAMP(6),
     "featured" BOOLEAN NOT NULL DEFAULT false,

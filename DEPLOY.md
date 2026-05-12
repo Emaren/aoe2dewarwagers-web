@@ -2,10 +2,10 @@
 
 ## Production truth
 
-- VPS repo path: `/var/www/AoE2HDBets/app-prodn`
-- service: `aoe2hdbets-web.service`
-- public domain: `https://aoe2hdbets.com`
-- bind: `127.0.0.1:3030`
+- VPS repo path: `/mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn`
+- service: `aoe2dewarwagers-web.service`
+- public domain: `https://aoe2dewarwagers.com`
+- bind: `127.0.0.1:4000`
 - service user: `tony`
 - preferred SSH alias from MBP: `hel1`
 
@@ -13,11 +13,11 @@
 
 Base unit:
 
-- `/etc/systemd/system/aoe2hdbets-web.service`
+- `/etc/systemd/system/aoe2dewarwagers-web.service`
 
 Restart tuning drop-in:
 
-- `/etc/systemd/system/aoe2hdbets-web.service.d/restart-tuning.conf`
+- `/etc/systemd/system/aoe2dewarwagers-web.service.d/restart-tuning.conf`
 
 Current restart tuning:
 
@@ -33,14 +33,14 @@ This exists because normal Next shutdowns were hanging and making deploys flaky.
 From MBP:
 
 ```bash
-git -C /Users/tonyblum/projects/AoE2HDBets/app-prodn push origin main
+git -C /Users/tonyblum/projects/AoE2DEWarWagers/app-prodn push origin main
 ```
 
 On VPS:
 
 ```bash
 ssh hel1
-cd /var/www/AoE2HDBets/app-prodn
+cd /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn
 git status --short
 git pull --ff-only origin main
 npm run build
@@ -49,10 +49,20 @@ npm run build
 Then restart as root:
 
 ```bash
-sudo systemctl restart aoe2hdbets-web.service
-systemctl is-active aoe2hdbets-web.service
-journalctl -u aoe2hdbets-web.service -n 40 --no-pager
+sudo systemctl restart aoe2dewarwagers-web.service
+systemctl is-active aoe2dewarwagers-web.service
+journalctl -u aoe2dewarwagers-web.service -n 40 --no-pager
 ```
+
+## Recent deployment notes
+
+### 2026-05-05 watcher telemetry and funnel truth
+
+- Added `watcher_client_events` for Electron watcher runtime telemetry.
+- Admin watcher rail now treats `/download/watcher/*` rows as noisy package pulls, not confirmed users.
+- Confirmed watcher users come from linked watcher client events plus the historical `game_stats.parse_source in ('watcher_live', 'watcher_final')` fallback.
+- Deployment requires `npx prisma migrate deploy` before restarting `aoe2dewarwagers-web.service`.
+- Watcher package artifacts should be rebuilt/synced before claiming the new telemetry client is in downloadable packages.
 
 ## WOLO betting env that must stay aligned
 
@@ -63,33 +73,72 @@ When `/bets` is expected to open real Keplr stake locks, these envs must agree i
 - `NEXT_PUBLIC_WOLO_BET_ESCROW_ADDRESS`
 - `WOLO_BET_ESCROW_ADDRESS`
 - `WOLO_SETTLEMENT_URL`
+- `WOLO_STAKING_WALLET_ADDRESS` / `NEXT_PUBLIC_WOLO_STAKING_WALLET_ADDRESS`
+- `WOLO_STAKING_WALLET_MNEMONIC`
+- `WOLO_STAKING_UNSTAKE_FEE` (optional; defaults to `auto`)
 
 If `NEXT_PUBLIC_WOLO_BET_ESCROW_ADDRESS` or `WOLO_BET_ESCROW_ADDRESS` are missing, `/bets` silently falls back toward app-only behavior and no real stake window will open.
+
+For `/staking`, fund the staking wallet with total confirmed user stake plus the operator reserve/headroom used for WoloChain unstake sends. AoE2DEWarWagers defaults to a `10 WOLO` reserve unless `WOLO_STAKING_UNSTAKE_HEADROOM_UWOLO` is set. User max-unstake should not be reduced by this reserve; underfunding should show the operator top-up warning instead.
+
+Unstake execution must sign from the staking wallet itself. Do not route unstake through the generic betting payout service: that service may preserve its own settlement headroom and will block or pay from the wrong custody rail. The live web env needs `WOLO_STAKING_WALLET_MNEMONIC` for `/api/staking/unstake` to broadcast the return transfer.
+
+Staking reward distributions are executed through the protected web route
+`POST /api/staking/rewards/run`. The route finalizes the last closed UTC day,
+allocates the staker side of the 1% betting fee by staking weight, pays valid
+wallets through the WOLO settlement rail, and records successful payouts as
+staking `CLAIM` events for the Recent Activity tile.
+
+Required env:
+
+- `STAKING_REWARD_RUN_TOKEN`
+- `STAKING_REWARD_RUN_URL=http://127.0.0.1:4000`
+- `WOLO_SETTLEMENT_URL` and related settlement auth env
+
+Recommended VPS timer shape:
+
+```ini
+# /etc/systemd/system/aoe2dewarwagers-staking-rewards.service
+[Service]
+Type=oneshot
+User=tony
+WorkingDirectory=/mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn
+EnvironmentFile=/etc/aoe2dewarwagers/aoe2dewarwagers-web.env
+ExecStart=/usr/bin/npm run staking:rewards:run
+
+# /etc/systemd/system/aoe2dewarwagers-staking-rewards.timer
+[Timer]
+OnCalendar=*-*-* 00:10:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
 
 ## Verification
 
 Minimum deploy checks:
 
 ```bash
-curl -I https://aoe2hdbets.com/
-curl -I https://aoe2hdbets.com/lobby
-curl -I https://aoe2hdbets.com/live-games
-curl -I https://aoe2hdbets.com/challenge
-curl -I https://aoe2hdbets.com/players
-curl -I https://aoe2hdbets.com/contact-emaren
-curl -s https://aoe2hdbets.com/api/lobby | jq '.leaderboard.trackedPlayers, (.leaderboard.entries | length)'
-curl -s https://aoe2hdbets.com/api/bets | jq '.wolo | { onchainEscrowEnabled, betEscrowAddress }'
-journalctl -u aoe2hdbets-web.service -n 20 --no-pager
+curl -I https://aoe2dewarwagers.com/
+curl -I https://aoe2dewarwagers.com/lobby
+curl -I https://aoe2dewarwagers.com/live-games
+curl -I https://aoe2dewarwagers.com/challenge
+curl -I https://aoe2dewarwagers.com/players
+curl -I https://aoe2dewarwagers.com/contact-emaren
+curl -s https://aoe2dewarwagers.com/api/lobby | jq '.leaderboard.trackedPlayers, (.leaderboard.entries | length)'
+curl -s https://aoe2dewarwagers.com/api/bets | jq '.wolo | { onchainEscrowEnabled, betEscrowAddress }'
+journalctl -u aoe2dewarwagers-web.service -n 20 --no-pager
 ```
 
 For WOLO betting deploys, also do this manual smoke pass:
 
 ```bash
 # 1. Confirm the public payload still exposes live escrow truth.
-curl -s https://aoe2hdbets.com/api/bets | jq '.wolo | { onchainEscrowEnabled, betEscrowAddress }'
+curl -s https://aoe2dewarwagers.com/api/bets | jq '.wolo | { onchainEscrowEnabled, betEscrowAddress }'
 
 # 2. Verify the service is healthy, then open /bets in a real browser session.
-journalctl -u aoe2hdbets-web.service -n 20 --no-pager
+journalctl -u aoe2dewarwagers-web.service -n 20 --no-pager
 ```
 
 Expected result for the browser pass:
@@ -101,19 +150,19 @@ Expected result for the browser pass:
 If browser wallets report `Failed to fetch balance`, `network error`, or a dead Keplr handoff, check these before blaming app code:
 
 ```bash
-curl -sSI -H 'Origin: https://aoe2hdbets.com' https://rpc.aoe2hdbets.com/status | rg 'Access-Control-Allow-Origin|HTTP/'
-curl -sSI -H 'Origin: https://www.aoe2hdbets.com' https://rpc.aoe2hdbets.com/status | rg 'Access-Control-Allow-Origin|HTTP/'
-curl -sSI -H 'Origin: https://aoe2hdbets.com' https://rest.aoe2hdbets.com/cosmos/base/tendermint/v1beta1/blocks/latest | rg 'Access-Control-Allow-Origin|HTTP/'
-curl -sSI -H 'Origin: https://www.aoe2hdbets.com' https://rest.aoe2hdbets.com/cosmos/base/tendermint/v1beta1/blocks/latest | rg 'Access-Control-Allow-Origin|HTTP/'
-journalctl -u aoe2hdbets-web.service -n 20 --no-pager
+curl -sSI -H 'Origin: https://aoe2dewarwagers.com' https://rpc.aoe2hdbets.com/status | rg 'Access-Control-Allow-Origin|HTTP/'
+curl -sSI -H 'Origin: https://www.aoe2dewarwagers.com' https://rpc.aoe2hdbets.com/status | rg 'Access-Control-Allow-Origin|HTTP/'
+curl -sSI -H 'Origin: https://aoe2dewarwagers.com' https://rest.aoe2hdbets.com/cosmos/base/tendermint/v1beta1/blocks/latest | rg 'Access-Control-Allow-Origin|HTTP/'
+curl -sSI -H 'Origin: https://www.aoe2dewarwagers.com' https://rest.aoe2hdbets.com/cosmos/base/tendermint/v1beta1/blocks/latest | rg 'Access-Control-Allow-Origin|HTTP/'
+journalctl -u aoe2dewarwagers-web.service -n 20 --no-pager
 ```
 
 For inbox attachment fixes, verify the actual binary route too:
 
 ```bash
-# Requires a valid aoe2hdbets_session cookie from a real participant.
-curl -I --cookie "aoe2hdbets_session=..." \
-  https://aoe2hdbets.com/api/contact-emaren/attachments/<messageId>
+# Requires a valid aoe2dewarwagers_session cookie from a real participant.
+curl -I --cookie "aoe2dewarwagers_session=..." \
+  https://aoe2dewarwagers.com/api/contact-emaren/attachments/<messageId>
 ```
 
 Expected result:
@@ -159,7 +208,7 @@ Expected:
 Typical fix:
 
 ```bash
-sudo chown -R tony:tony /var/www/AoE2HDBets/app-prodn
+sudo chown -R tony:tony /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn
 ```
 
 Why this is cleaner now:
@@ -180,7 +229,7 @@ Current guardrails:
 If watcher download totals look suspicious after a deploy:
 
 ```bash
-journalctl -u aoe2hdbets-web.service -n 80 --no-pager
+journalctl -u aoe2dewarwagers-web.service -n 80 --no-pager
 ```
 
 Then verify the public page is still using plain download anchors, not Next-prefetchable internal navigation.
@@ -207,7 +256,7 @@ This file still drifts on the VPS and has caused:
 
 - local modifications in the server repo
 - file ownership issues during builds
-- manual `chown tony:tony /var/www/AoE2HDBets/app-prodn/next-env.d.ts`
+- manual `chown tony:tony /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn/next-env.d.ts`
 
 Until fixed properly:
 
@@ -220,7 +269,7 @@ Direct-message attachments are session-protected, so preview failures are not al
 
 Check these in order:
 - authenticated route response from `/api/contact-emaren/attachments/:id`
-- `journalctl -u aoe2hdbets-web.service`
+- `journalctl -u aoe2dewarwagers-web.service`
 - `Content-Disposition` generation in the route
 
 Known real failure:
@@ -240,8 +289,23 @@ Do not restart blindly before the schema is in place.
 
 ## Related runtime truth
 
-- backend upstream should remain `http://127.0.0.1:3330`
+- backend upstream should remain `http://127.0.0.1:4400`
 - browser should stay same-origin for `/api/*`
-- watcher uploads should continue to target `api-prodn.aoe2hdbets.com`, not the public web host
-- browser wallet reads and stake verification depend on `rpc.aoe2hdbets.com` and `rest.aoe2hdbets.com` staying CORS-clean for both `aoe2hdbets.com` and `www.aoe2hdbets.com`
-- dedicated nginx request-log runbook for AoE2 Phase 1 lives at [deploy/aoe2-access-logging-phase1.md](/Users/tonyblum/projects/AoE2HDBets/app-prodn/deploy/aoe2-access-logging-phase1.md)
+- watcher uploads should continue to target `api-prodn.aoe2dewarwagers.com`, not the public web host
+- browser wallet reads and stake verification depend on `rpc.aoe2hdbets.com` and `rest.aoe2hdbets.com` staying CORS-clean for both `aoe2dewarwagers.com` and `www.aoe2dewarwagers.com`
+- dedicated nginx request-log runbook for AoE2 Phase 1 lives at [deploy/aoe2-access-logging-phase1.md](/Users/tonyblum/projects/AoE2DEWarWagers/app-prodn/deploy/aoe2-access-logging-phase1.md)
+
+
+## Staking unstake signer
+
+`/api/staking/unstake` must use the staking custody rail.
+
+Preferred live setup:
+
+- key name: `staking`
+- home: `/var/lib/wolochaind-testnet`
+- CLI: `/var/www/WoloChain/build/wolochaind`
+- keyring backend: `test`
+- fee: `5000uwolo`
+
+Do not route staking unstake through the generic betting payout service. That path has different settlement headroom semantics and can block valid staking returns.

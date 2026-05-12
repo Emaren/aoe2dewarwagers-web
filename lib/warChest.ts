@@ -1,7 +1,11 @@
 import type { PrismaClient } from "@/lib/generated/prisma";
 
 import { loadBetBoardSnapshot, type BetBoardSnapshot } from "@/lib/bets";
-import type { LobbyWoloEarnersBoard, LobbyWoloSnapshot } from "@/lib/lobby";
+import type {
+  LobbyWoloEarnersBoard,
+  LobbyWoloEarnersMode,
+  LobbyWoloSnapshot,
+} from "@/lib/lobby";
 import { loadLobbyWoloEarnersBoard } from "@/lib/lobbyWoloEarners";
 import {
   buildClaimedPlayerHref,
@@ -64,6 +68,12 @@ export type WarChestSnapshot = {
   recentClaims: WarChestRecentClaim[];
 };
 
+export type WarChestMode = LobbyWoloEarnersMode;
+
+export function normalizeWarChestMode(value: string | null | undefined): WarChestMode {
+  return value === "all_time" ? "all_time" : "weekly";
+}
+
 function resolvePlayerHref(input: {
   uid: string | null;
   inGameName: string | null;
@@ -92,12 +102,18 @@ function displayActorName(input: {
 
 export async function loadWarChestSnapshot(
   prisma: PrismaClient,
-  viewerUid?: string | null
+  viewerUid?: string | null,
+  options: { mode?: WarChestMode } = {}
 ): Promise<WarChestSnapshot> {
-  const [wolo, earners, betBoard] = await Promise.all([
+  const mode = options.mode ?? "weekly";
+
+  // Important: loadBetBoardSnapshot() runs bet-market reconciliation and creates
+  // pending WOLO claim rows for newly settled markets. Do this before loading
+  // the earners board so War Chest does not race against its own claim creation.
+  const betBoard = await loadBetBoardSnapshot(prisma, viewerUid);
+  const [wolo, earners] = await Promise.all([
     loadWoloDevSnapshot(),
-    loadLobbyWoloEarnersBoard(prisma),
-    loadBetBoardSnapshot(prisma, viewerUid),
+    loadLobbyWoloEarnersBoard(prisma, { mode }),
   ]);
 
   const weekStartsAt = new Date(earners.weekStartsAt);

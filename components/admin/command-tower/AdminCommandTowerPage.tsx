@@ -1,22 +1,16 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { Palette, Sparkles } from "lucide-react";
+import { LayoutGrid, Palette, Sparkles } from "lucide-react";
 
-import FounderBonusModal from "@/components/bets/FounderBonusModal";
 import AdminUserCard from "@/components/admin/command-tower/AdminUserCard";
-import type {
-  DraftState,
-  FounderComposerState,
-  ReconcilePendingClaimsPayload,
-} from "@/components/admin/command-tower/types";
+import type { DraftState } from "@/components/admin/command-tower/types";
+import WoloChainEntryTile from "@/components/admin/command-tower/WoloChainEntryTile";
 import {
   formatWolo,
   pinnedBottomRank,
 } from "@/components/admin/command-tower/utils";
 import { useAdminCommandTowerData } from "@/components/admin/command-tower/useAdminCommandTowerData";
-import { WoloMarketRail } from "@/components/admin/WoloMarketRail";
-import { WoloSettlementRail } from "@/components/admin/WoloSettlementRail";
 import { WatcherDownloadRail } from "@/components/admin/WatcherDownloadRail";
 
 type DraftStateByUid = Record<string, DraftState>;
@@ -60,12 +54,6 @@ export default function AdminCommandTowerPage() {
   } = useAdminCommandTowerData();
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<DraftStateByUid>({});
-  const [rescindingSettlementClaimId, setRescindingSettlementClaimId] = useState<number | null>(null);
-  const [retryingSettlementClaimId, setRetryingSettlementClaimId] = useState<number | null>(null);
-  const [reconcilingPendingClaims, setReconcilingPendingClaims] = useState(false);
-  const [founderComposer, setFounderComposer] = useState<FounderComposerState | null>(null);
-  const [savingFounderBonus, setSavingFounderBonus] = useState(false);
-  const [founderBonusError, setFounderBonusError] = useState<string | null>(null);
 
   const getDraft = useCallback(
     (uid: string) => drafts[uid] ?? EMPTY_DRAFT,
@@ -81,172 +69,6 @@ export default function AdminCommandTowerPage() {
       },
     }));
   }, []);
-
-  const rescindSettlementClaim = useCallback(async (claimId: number) => {
-    const confirmed = window.confirm("Rescind this WOLO settlement row?");
-    if (!confirmed) return;
-
-    setRescindingSettlementClaimId(claimId);
-
-    try {
-      const response = await fetch(`/api/admin/wolo-claims/${claimId}`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          note: "Rescinded from admin settlement rail",
-        }),
-      });
-
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail || "Failed to rescind WOLO claim.");
-      }
-
-      await refreshAll();
-    } catch (nextError) {
-      const detail =
-        nextError instanceof Error ? nextError.message : "Failed to rescind WOLO claim.";
-      window.alert(detail);
-    } finally {
-      setRescindingSettlementClaimId(null);
-    }
-  }, [refreshAll]);
-
-  const retrySettlementClaim = useCallback(async (claimId: number) => {
-    const confirmed = window.confirm("Retry this failed WOLO payout from the admin rail?");
-    if (!confirmed) return;
-
-    setRetryingSettlementClaimId(claimId);
-
-    try {
-      const response = await fetch(`/api/admin/wolo-claims/${claimId}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "retry_settlement",
-        }),
-      });
-
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail || "Failed to retry WOLO payout.");
-      }
-
-      await refreshAll();
-    } catch (nextError) {
-      const detail =
-        nextError instanceof Error ? nextError.message : "Failed to retry WOLO payout.";
-      window.alert(detail);
-    } finally {
-      setRetryingSettlementClaimId(null);
-    }
-  }, [refreshAll]);
-
-  const reconcilePendingClaims = useCallback(async () => {
-    const confirmed = window.confirm(
-      "Sweep pending WOLO claims and auto-settle any rows that now match verified wallet-linked users?"
-    );
-    if (!confirmed) return;
-
-    setReconcilingPendingClaims(true);
-
-    try {
-      const response = await fetch("/api/admin/wolo-claims", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "reconcile_pending",
-          take: 40,
-        }),
-      });
-
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail || "Failed to reconcile pending WOLO claims.");
-      }
-
-      const result = (await response.json()) as ReconcilePendingClaimsPayload;
-      await refreshAll();
-
-      window.alert(
-        [
-          `Scanned ${result.summary.scannedCount} pending claims.`,
-          `Settled ${result.summary.claimedCount} for ${formatWolo(result.summary.claimedAmountWolo)} WOLO.`,
-          `Failed ${result.summary.failedCount}.`,
-          `Still unmatched ${result.summary.skippedUnmatchedCount}.`,
-          `Already had tx hash ${result.summary.skippedHasTxHashCount}.`,
-        ].join("\n")
-      );
-    } catch (nextError) {
-      const detail =
-        nextError instanceof Error ? nextError.message : "Failed to reconcile pending WOLO claims.";
-      window.alert(detail);
-    } finally {
-      setReconcilingPendingClaims(false);
-    }
-  }, [refreshAll]);
-
-  const openFounderComposer = useCallback((row: { marketId: number | null; marketTitle: string | null; eventLabel: string | null }, bonusType: "participants" | "winner") => {
-    if (!row.marketId) {
-      return;
-    }
-
-    setFounderBonusError(null);
-    setFounderComposer({
-      marketId: row.marketId,
-      marketTitle: row.marketTitle || row.eventLabel || `Market #${row.marketId}`,
-      bonusType,
-      amountValue: bonusType === "participants" ? "200" : "300",
-      noteValue: "",
-    });
-  }, []);
-
-  const submitFounderBonus = useCallback(async () => {
-    if (!founderComposer) {
-      return;
-    }
-
-    setSavingFounderBonus(true);
-    setFounderBonusError(null);
-
-    try {
-      const response = await fetch(
-        `/api/admin/bets/markets/${founderComposer.marketId}/founders`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            bonusType: founderComposer.bonusType,
-            amountWolo: founderComposer.amountValue,
-            note: founderComposer.noteValue || undefined,
-          }),
-        }
-      );
-
-      const payload = (await response.json().catch(() => ({}))) as {
-        detail?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(payload.detail || "Founder bonus could not be saved.");
-      }
-
-      await refreshAll();
-      setFounderComposer(null);
-    } catch (nextError) {
-      setFounderBonusError(
-        nextError instanceof Error ? nextError.message : "Founder bonus could not be saved."
-      );
-    } finally {
-      setSavingFounderBonus(false);
-    }
-  }, [founderComposer, refreshAll]);
 
   const runCommunityAction = useCallback(async (uid: string, body: Record<string, unknown>) => {
     setBusyKey(`${uid}:${String(body.action)}`);
@@ -368,9 +190,9 @@ export default function AdminCommandTowerPage() {
             Admin dashboard for the real player experience
           </h1>
           <p className="max-w-3xl text-base leading-7 text-slate-300 sm:text-lg">
-            Full activity rails, WOLO claim state, schedule pressure, bet history, direct-line
-            unread danger, and the product signals that tell you who is alive, who is drifting,
-            and where the heat is building.
+            User health, honors, schedule pressure, bet history, direct-line unread danger, and
+            the product signals that tell you who is alive, who is drifting, and where the heat is
+            building.
           </p>
         </div>
       </section>
@@ -387,7 +209,7 @@ export default function AdminCommandTowerPage() {
       ) : null}
 
       {data?.overview ? (
-        <section className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
+        <section className="grid gap-4 xl:grid-cols-[1fr_0.95fr_0.85fr]">
           <div className="rounded-[1.5rem] border border-white/10 bg-slate-950/70 p-5">
             <div className="flex items-center gap-2 text-xs uppercase tracking-[0.28em] text-slate-500">
               <Palette className="h-4 w-4" />
@@ -421,37 +243,90 @@ export default function AdminCommandTowerPage() {
               </div>
             </div>
           </div>
+
+          <div className="rounded-[1.5rem] border border-white/10 bg-slate-950/70 p-5">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.28em] text-slate-500">
+              <LayoutGrid className="h-4 w-4" />
+              Tile Views
+            </div>
+            <div className="mt-4 space-y-3">
+              {data.overview.tileViewBreakdown.map((entry) => (
+                <div key={entry.tileKey} className="rounded-2xl border border-white/8 bg-white/5 px-4 py-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[11px] uppercase tracking-[0.24em] text-slate-500">
+                      {entry.label}
+                    </div>
+                    <div className="rounded-full border border-white/10 bg-slate-950/70 px-2.5 py-1 text-[11px] capitalize text-slate-300">
+                      {entry.preferredMode}
+                    </div>
+                  </div>
+                  <div className="mt-3 text-2xl font-semibold text-white">
+                    {entry.basicPercent}% Basic / {entry.advancedPercent}% Advanced
+                  </div>
+                  <div className="mt-2 text-xs text-slate-400">
+                    {entry.basicCount} basic · {entry.advancedCount} advanced
+                  </div>
+                </div>
+              ))}
+              <div className="rounded-2xl border border-white/8 bg-white/5 px-4 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[11px] uppercase tracking-[0.24em] text-slate-500">
+                    Schedule Organization
+                  </div>
+                  <div className="rounded-full border border-white/10 bg-slate-950/70 px-2.5 py-1 text-[11px] text-slate-300">
+                    {data.overview.scheduledPreferenceUsage.usersWithPreferences} users
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div>
+                    <div className="text-2xl font-semibold text-white">
+                      {data.overview.scheduledPreferenceUsage.favoriteCount}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-400">favorites</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-semibold text-white">
+                      {data.overview.scheduledPreferenceUsage.bookmarkedCount}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-400">bookmarks</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-semibold text-white">
+                      {Object.values(data.overview.scheduledPreferenceUsage.colorTagCounts).reduce(
+                        (sum, count) => sum + count,
+                        0
+                      )}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-400">color tags</div>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5 text-[10px] uppercase tracking-[0.18em] text-slate-400">
+                  {Object.entries(data.overview.scheduledPreferenceUsage.colorTagCounts).map(
+                    ([tag, count]) => (
+                      <span key={tag} className="rounded-full border border-white/10 bg-slate-950/60 px-2 py-1">
+                        {tag} {count}
+                      </span>
+                    )
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
       ) : null}
 
       {data ? (
         <div className="mt-6">
-          <WoloMarketRail summary={data.marketRail.summary} rows={data.marketRail.rows} />
-        </div>
-      ) : null}
-
-      {data ? (
-        <div className="mt-6">
-          <WoloSettlementRail
-            summary={data.settlementRail.summary}
-            rows={data.settlementRail.rows}
-            rescindingClaimId={rescindingSettlementClaimId}
-            retryingClaimId={retryingSettlementClaimId}
-            reconcilingPending={reconcilingPendingClaims}
-            onRescind={rescindSettlementClaim}
-            onRetry={retrySettlementClaim}
-            onReconcilePending={reconcilePendingClaims}
-            onAddFounderBonus={openFounderComposer}
+          <WoloChainEntryTile
+            marketSummary={data.marketRail.summary}
+            settlementSummary={data.settlementRail.summary}
           />
         </div>
       ) : null}
 
       {data ? (
         <div className="mt-6">
-          <WatcherDownloadRail
-            summary={data.watcherDownloads.summary}
-            recent={data.watcherDownloads.recent}
-          />
+          <WatcherDownloadRail analytics={data.watcherDownloads} />
         </div>
       ) : null}
 
@@ -479,32 +354,6 @@ export default function AdminCommandTowerPage() {
         ))}
       </section>
 
-      <FounderBonusModal
-        open={Boolean(founderComposer)}
-        marketTitle={founderComposer?.marketTitle || "Market"}
-        bonusType={founderComposer?.bonusType || "participants"}
-        amountValue={founderComposer?.amountValue || ""}
-        noteValue={founderComposer?.noteValue || ""}
-        saving={savingFounderBonus}
-        error={founderBonusError}
-        onBonusTypeChange={(value) =>
-          setFounderComposer((current) => (current ? { ...current, bonusType: value } : current))
-        }
-        onAmountChange={(value) =>
-          setFounderComposer((current) => (current ? { ...current, amountValue: value } : current))
-        }
-        onNoteChange={(value) =>
-          setFounderComposer((current) => (current ? { ...current, noteValue: value } : current))
-        }
-        onClose={() => {
-          if (savingFounderBonus) return;
-          setFounderComposer(null);
-          setFounderBonusError(null);
-        }}
-        onSubmit={() => {
-          void submitFounderBonus();
-        }}
-      />
     </main>
   );
 }

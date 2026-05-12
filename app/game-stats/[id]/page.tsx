@@ -11,7 +11,6 @@ import {
   displayGameVersion,
   displayPlayerName,
   displayReplayFilename,
-  isUnparsedFinal,
   outcomeBadgeLabel,
   parsePlayers,
   parseStatusLabel,
@@ -22,11 +21,8 @@ import {
   readPlayerSteamId,
   readPlayerSteamRmRating,
   readPlayedAt,
-  readWatcherMetadata,
-  replayParticipantsLabel,
   shortHash,
   stringifyJson,
-  watcherMetadataContextLabels,
   winnerLabel,
 } from "@/lib/gameStatsView";
 import {
@@ -166,19 +162,6 @@ export default async function GameStatsDetailPage({
       ? game.key_events
       : {};
   const keyEventRecord = keyEvents as Record<string, unknown>;
-  const watcherMetadata = readWatcherMetadata(game.key_events);
-  const watcherContextLabels = watcherMetadataContextLabels(game.key_events);
-  const primaryWatcherContextLabels = watcherContextLabels.filter(
-    (label) => !label.includes("candidate lobby ID")
-  );
-  const localPlayerMetadata = readNestedRecord(watcherMetadata, "local_player");
-  const watcherGameVersion = readNestedRecord(watcherMetadata, "game_version");
-  const watcherRuntime = readNestedRecord(watcherMetadata, "de_runtime");
-  const candidateLobbyIds = Array.isArray(watcherMetadata.candidate_lobby_ids)
-    ? watcherMetadata.candidate_lobby_ids.filter(
-        (entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object"
-      )
-    : [];
   const settingsSummary =
     keyEventRecord.settings &&
     typeof keyEventRecord.settings === "object" &&
@@ -230,7 +213,7 @@ export default async function GameStatsDetailPage({
                   );
                 })
               ) : (
-                replayParticipantsLabel(game.players, game.parse_reason, game.key_events)
+                "Player list unavailable"
               )}
             </p>
             <div className="flex flex-wrap gap-2">
@@ -353,15 +336,7 @@ export default async function GameStatsDetailPage({
           <Panel title="Players" eyebrow="Roster">
             <div className="grid gap-4 lg:grid-cols-2">
               {players.length === 0 ? (
-                <EmptyPanel
-                  message={
-                    isUnparsedFinal(game.parse_reason)
-                      ? "Final replay stored. Player extraction is awaiting parser support."
-                      : game.parse_reason === "watcher_final_metadata"
-                        ? "Watcher runtime context is stored, but no complete player roster is trusted yet."
-                      : "No player payload was stored for this replay."
-                  }
-                />
+                <EmptyPanel message="No player payload was stored for this replay." />
               ) : (
                 players.map((player, index) => {
                   const playerName = displayPlayerName(player);
@@ -434,56 +409,6 @@ export default async function GameStatsDetailPage({
         </div>
 
         <div className="space-y-6">
-          {watcherContextLabels.length > 0 ? (
-            <Panel title="Watcher Metadata" eyebrow="Runtime Context">
-              <div className="space-y-4">
-                <div className="flex flex-wrap gap-2">
-                  {primaryWatcherContextLabels.map((label) => (
-                    <Tag key={label}>{label}</Tag>
-                  ))}
-                  <Tag>Not bet eligible</Tag>
-                </div>
-
-                <dl className="grid gap-4 sm:grid-cols-2">
-                  <StatRow
-                    label="Local Player"
-                    value={
-                      formatPrimitive(localPlayerMetadata.persona_name) !== "Unknown"
-                        ? formatPrimitive(localPlayerMetadata.persona_name)
-                        : formatPrimitive(localPlayerMetadata.steam64)
-                    }
-                  />
-                  <StatRow label="Local Steam ID" value={formatPrimitive(localPlayerMetadata.steam64)} />
-                  <StatRow label="Watcher DE Version" value={formatPrimitive(watcherGameVersion.value)} />
-                  <StatRow label="Watcher DE Build" value={formatPrimitive(watcherGameVersion.build)} />
-                  <StatRow
-                    label="DE Player Session"
-                    value={formatPrimitive(watcherRuntime.player_session_id)}
-                  />
-                </dl>
-
-                {candidateLobbyIds.length > 0 ? (
-                  <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-4 text-sm leading-6 text-slate-400">
-                    <div className="text-xs uppercase tracking-[0.25em] text-slate-500">
-                      Low-confidence lobby candidates
-                    </div>
-                    <div className="mt-2 [overflow-wrap:anywhere]">
-                      {candidateLobbyIds.map((entry) => formatPrimitive(entry.id)).join(", ")}
-                    </div>
-                    <div className="mt-2 text-xs leading-5 text-slate-500">
-                      Observed in DE logs only; not promoted to match identity.
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-4 text-sm leading-6 text-amber-100">
-                  Watcher metadata is local runtime context only. It does not verify the full roster,
-                  map, winner, or bet settlement truth.
-                </div>
-              </div>
-            </Panel>
-          ) : null}
-
           <Panel title="Parse Signals" eyebrow="Metadata">
             <div className="space-y-4">
               {Object.keys(settingsSummary).length > 0 ? (

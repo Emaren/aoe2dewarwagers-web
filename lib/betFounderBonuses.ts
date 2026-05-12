@@ -403,7 +403,7 @@ export async function resolveFounderClaimTargetUser(
     return {
       matchedUser: null,
       matchedBy: null,
-      detail: "Founder payout context is missing from AoE2HDBets for this claim.",
+      detail: "Founder payout context is missing from AoE2DEWarWagers for this claim.",
     };
   }
 

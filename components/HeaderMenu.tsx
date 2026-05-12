@@ -8,6 +8,7 @@ import {
   Coins,
   ChevronDown,
   Download,
+  HandCoins,
   ListChecks,
   MessageSquareMore,
   Radio,
@@ -73,7 +74,9 @@ export default function HeaderMenu({
         badge: liveGamesCount > 0 ? String(liveGamesCount) : null,
         featured: true,
       },
+      { href: "/watch", label: "Watch Hall", icon: Radio, featured: true },
       { href: "/players", label: "Players", icon: Users, featured: true },
+      { href: "/staking", label: "Staking", icon: HandCoins, featured: true },
       {
         href: "/requests",
         label: "Requests",

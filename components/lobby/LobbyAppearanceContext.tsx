@@ -35,11 +35,24 @@ import {
   saveUserAppearancePreference,
 } from "@/lib/userAppearanceClient";
 import {
+  readStoredTileViewPreferences,
+  setTileViewPreference as updateTileViewPreference,
+  writeStoredTileViewPreferences,
+  type TileViewKey,
+  type TileViewMode,
+  type TileViewPreferences,
+} from "@/lib/tileViewPreferences";
+import {
+  DEFAULT_TIME_CLOCK_MODE,
+  DEFAULT_TIME_DISPLAY_MODE,
   detectBrowserTimeZone,
   readStoredBrowserTimeZone,
+  readStoredTimeClockMode,
   readStoredTimeDisplayMode,
   writeStoredBrowserTimeZone,
+  writeStoredTimeClockMode,
   writeStoredTimeDisplayMode,
+  type TimeClockMode,
   type TimeDisplayMode,
 } from "@/lib/timeDisplay";
 
@@ -54,7 +67,11 @@ type LobbyAppearanceContextValue = {
   setTextColor: (textColor: LobbyTextColor) => void;
   timeDisplayMode: TimeDisplayMode;
   setTimeDisplayMode: (timeDisplayMode: TimeDisplayMode) => void;
+  timeClockMode: TimeClockMode;
+  setTimeClockMode: (timeClockMode: TimeClockMode) => void;
   browserTimeZone: string | null;
+  tileViewPreferences: TileViewPreferences;
+  setTileViewPreference: (tileKey: TileViewKey, viewMode: TileViewMode) => void;
   appearanceLoaded: boolean;
   presentationTone: ReturnType<typeof getLobbyPresentationTone>;
   pageStyle: CSSProperties;
@@ -68,8 +85,10 @@ export function LobbyAppearanceProvider({ children }: { children: ReactNode }) {
   const [tileThemeKey, setTileThemeKey] = useState<LobbyThemeKey>(DEFAULT_LOBBY_TILE_THEME);
   const [viewMode, setViewMode] = useState<LobbyViewMode>(DEFAULT_LOBBY_VIEW);
   const [textColor, setTextColor] = useState<LobbyTextColor>(DEFAULT_LOBBY_TEXT_COLOR);
-  const [timeDisplayMode, setTimeDisplayMode] = useState<TimeDisplayMode>("utc");
+  const [timeDisplayMode, setTimeDisplayMode] = useState<TimeDisplayMode>(DEFAULT_TIME_DISPLAY_MODE);
+  const [timeClockMode, setTimeClockMode] = useState<TimeClockMode>(DEFAULT_TIME_CLOCK_MODE);
   const [browserTimeZone, setBrowserTimeZone] = useState<string | null>(null);
+  const [tileViewPreferences, setTileViewPreferences] = useState<TileViewPreferences>({});
   const [appearanceLoaded, setAppearanceLoaded] = useState(false);
 
   useEffect(() => {
@@ -81,6 +100,8 @@ export function LobbyAppearanceProvider({ children }: { children: ReactNode }) {
     const storedView = readStoredLobbyViewMode();
     const storedTextColor = readStoredLobbyTextColor();
     const storedTimeDisplayMode = readStoredTimeDisplayMode();
+    const storedTimeClockMode = readStoredTimeClockMode();
+    const storedTileViewPreferences = readStoredTileViewPreferences();
     const detectedBrowserTimeZone =
       detectBrowserTimeZone() || readStoredBrowserTimeZone();
     setBrowserTimeZone(detectedBrowserTimeZone);
@@ -94,6 +115,8 @@ export function LobbyAppearanceProvider({ children }: { children: ReactNode }) {
           setViewMode(storedView);
           setTextColor(storedTextColor);
           setTimeDisplayMode(storedTimeDisplayMode);
+          setTimeClockMode(storedTimeClockMode);
+          setTileViewPreferences(storedTileViewPreferences);
           setAppearanceLoaded(true);
         }
         return;
@@ -107,7 +130,9 @@ export function LobbyAppearanceProvider({ children }: { children: ReactNode }) {
         setViewMode(preference.viewMode);
         setTextColor(preference.textColor);
         setTimeDisplayMode(preference.timeDisplayMode);
+        setTimeClockMode(preference.timeClockMode);
         setBrowserTimeZone(preference.timezoneOverride || detectedBrowserTimeZone);
+        setTileViewPreferences(preference.tileViewPreferences ?? {});
       } catch (error) {
         console.warn("Failed to hydrate appearance from account:", error);
         if (cancelled) return;
@@ -116,6 +141,8 @@ export function LobbyAppearanceProvider({ children }: { children: ReactNode }) {
         setViewMode(storedView);
         setTextColor(storedTextColor);
         setTimeDisplayMode(storedTimeDisplayMode);
+        setTimeClockMode(storedTimeClockMode);
+        setTileViewPreferences(storedTileViewPreferences);
       } finally {
         if (!cancelled) {
           setAppearanceLoaded(true);
@@ -151,8 +178,25 @@ export function LobbyAppearanceProvider({ children }: { children: ReactNode }) {
   }, [timeDisplayMode]);
 
   useEffect(() => {
+    writeStoredTimeClockMode(timeClockMode);
+  }, [timeClockMode]);
+
+  useEffect(() => {
     writeStoredBrowserTimeZone(browserTimeZone);
   }, [browserTimeZone]);
+
+  useEffect(() => {
+    writeStoredTileViewPreferences(tileViewPreferences);
+  }, [tileViewPreferences]);
+
+  const setTileViewPreference = useMemo(
+    () => (tileKey: TileViewKey, nextViewMode: TileViewMode) => {
+      setTileViewPreferences((current) =>
+        updateTileViewPreference(current, tileKey, nextViewMode)
+      );
+    },
+    []
+  );
 
   useEffect(() => {
     if (!appearanceLoaded || !user?.uid) return;
@@ -163,7 +207,9 @@ export function LobbyAppearanceProvider({ children }: { children: ReactNode }) {
       viewMode,
       textColor,
       timeDisplayMode,
+      timeClockMode,
       timezoneOverride: browserTimeZone,
+      tileViewPreferences,
     }).catch((error) => {
       console.warn("Failed to save appearance preference:", error);
     });
@@ -173,6 +219,8 @@ export function LobbyAppearanceProvider({ children }: { children: ReactNode }) {
     textColor,
     themeKey,
     tileThemeKey,
+    tileViewPreferences,
+    timeClockMode,
     timeDisplayMode,
     user?.uid,
     viewMode,
@@ -258,7 +306,11 @@ export function LobbyAppearanceProvider({ children }: { children: ReactNode }) {
         setTextColor,
         timeDisplayMode,
         setTimeDisplayMode,
+        timeClockMode,
+        setTimeClockMode,
         browserTimeZone,
+        tileViewPreferences,
+        setTileViewPreference,
         appearanceLoaded,
         presentationTone,
         pageStyle,

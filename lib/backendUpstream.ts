@@ -3,8 +3,8 @@ export function getBackendUpstreamBase() {
     process.env.AOE2_BACKEND_UPSTREAM ||
     process.env.BACKEND_API ||
     process.env.NEXT_PUBLIC_API_BASE_URL ||
-    "http://127.0.0.1:3330";
+    "http://127.0.0.1:4400";
 
-  const normalized = raw === "." ? "http://127.0.0.1:3330" : raw;
+  const normalized = raw === "." ? "http://127.0.0.1:4400" : raw;
   return normalized.replace(/\/$/, "");
 }

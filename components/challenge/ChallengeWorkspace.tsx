@@ -1,9 +1,9 @@
-
 "use client";
 
 import Link from "next/link";
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { ArrowUpRight, Clock3, MessageSquareMore, Plus, Wallet } from "lucide-react";
 
 import ScheduledMatchCard, {
   type ScheduledMatchCardActionKind,
@@ -14,12 +14,22 @@ import TimeDisplayText from "@/components/time/TimeDisplayText";
 import SteamLoginButton from "@/components/SteamLoginButton";
 import AutoGrowTextarea from "@/components/ui/AutoGrowTextarea";
 import { useUserAuth } from "@/context/UserAuthContext";
-import { CHALLENGE_NOTE_MAX_CHARS } from "@/lib/challengeConfig";
-import type { ChallengeActivityItem, ChallengeHubSnapshot } from "@/lib/challenges";
+import { useKeplr } from "@/hooks/use-keplr";
 import {
-  buildUtcDateTimeInputValue,
-  parseUtcDateTimeInputValue,
-} from "@/lib/timeDisplay";
+  CHALLENGE_DEFAULT_GUARANTEE_WOLO,
+  CHALLENGE_DEFAULT_WAGER_WOLO,
+  CHALLENGE_NOTE_MAX_CHARS,
+} from "@/lib/challengeConfig";
+import {
+  challengeFundingEscrowAddress,
+  fundChallengeEscrow,
+} from "@/lib/clientChallengeFunding";
+import type { ChallengeActivityItem, ChallengeHubSnapshot } from "@/lib/challenges";
+import type {
+  ScheduledMatchColorTag,
+  ScheduledMatchViewerPreference,
+} from "@/lib/scheduledMatchPreferences";
+import { formatDateTime } from "@/lib/timeDisplay";
 
 const EMPTY_SNAPSHOT: ChallengeHubSnapshot = {
   viewer: null,
@@ -32,28 +42,75 @@ const EMPTY_SNAPSHOT: ChallengeHubSnapshot = {
     losses: 0,
     pending: 0,
     accepted: 0,
+    funded: 0,
+    ready: 0,
     declined: 0,
     cancelled: 0,
     completed: 0,
     forfeited: 0,
+    noShows: 0,
     total: 0,
   },
+  serverNow: new Date(0).toISOString(),
   updatedAt: new Date(0).toISOString(),
 };
 
+type ChallengeCreateSnapshot = ChallengeHubSnapshot & {
+  createdChallengeId?: number | null;
+  detail?: string;
+  duplicateWarning?: string | null;
+};
+
+const ACTIVE_RUNWAY_STATES: string[] = [
+  "proposed",
+  "pending",
+  "terms_accepted",
+  "accepted",
+  "creator_funded",
+  "opponent_funded",
+  "funded",
+  "checkin_open",
+  "left_checked_in",
+  "right_checked_in",
+  "ready",
+  "live",
+] as const;
+
+type ActivityMatch = ChallengeHubSnapshot["scheduledMatches"][number];
+
 function defaultScheduledAtValue() {
   const next = new Date(Date.now() + 60 * 60 * 1000);
-  next.setUTCSeconds(0, 0);
+  next.setSeconds(0, 0);
 
-  const roundedMinutes = Math.ceil(next.getUTCMinutes() / 15) * 15;
+  const roundedMinutes = Math.ceil(next.getMinutes() / 15) * 15;
   if (roundedMinutes >= 60) {
-    next.setUTCHours(next.getUTCHours() + 1);
-    next.setUTCMinutes(0, 0, 0);
+    next.setHours(next.getHours() + 1);
+    next.setMinutes(0, 0, 0);
   } else {
-    next.setUTCMinutes(roundedMinutes, 0, 0);
+    next.setMinutes(roundedMinutes, 0, 0);
   }
 
-  return buildUtcDateTimeInputValue(next);
+  return toLocalDateTimeValue(next);
+}
+
+function toLocalDateTimeValue(value: string | Date) {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function parseLocalDateTimeInputValue(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function formatActivityTitle(activity: ChallengeActivityItem) {
@@ -62,12 +119,38 @@ function formatActivityTitle(activity: ChallengeActivityItem) {
       return "Challenge scheduled";
     case "accepted":
       return "Challenge accepted";
+    case "terms_accepted":
+      return "Terms accepted";
+    case "creator_funded":
+      return "Creator funded";
+    case "opponent_funded":
+      return "Opponent funded";
+    case "left_checked_in":
+    case "right_checked_in":
+      return "Check-in recorded";
+    case "live_confirmed":
+      return "Live confirmed";
+    case "no_show_left":
+    case "no_show_right":
+    case "double_no_show":
+      return "No-show resolved";
     case "declined":
       return "Challenge declined";
     case "cancelled":
+    case "canceled":
       return "Challenge cancelled";
+    case "rescheduled":
+      return "Challenge rescheduled";
     case "completed":
       return "Match completed";
+    case "refund_sent":
+      return "Refund sent";
+    case "guarantee_forfeited_to_treasury":
+      return "Guarantee routed to Treasury";
+    case "scheduled_settlement_completed":
+      return "Escrow settlement completed";
+    case "scheduled_settlement_failed":
+      return "Escrow settlement failed";
     case "forfeited":
       return "Match forfeited";
     default:
@@ -75,21 +158,104 @@ function formatActivityTitle(activity: ChallengeActivityItem) {
   }
 }
 
+function metadataNumber(activity: ChallengeActivityItem, key: string) {
+  const value = activity.metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function metadataString(activity: ChallengeActivityItem, key: string) {
+  const value = activity.metadata?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function shortHash(value: string) {
+  if (value.length <= 16) return value;
+  return `${value.slice(0, 8)}...${value.slice(-6)}`;
+}
+
+function formatActivityCompact(activity: ChallengeActivityItem, match?: ActivityMatch) {
+  const totalLabel = match ? `${match.terms.totalFundingWolo.toLocaleString()} WOLO` : "WOLO";
+  const matchLabel = match
+    ? `${match.challenger.name} vs ${match.challenged.name}`
+    : `Match #${activity.scheduledMatchId}`;
+
+  switch (activity.eventType) {
+    case "scheduled":
+    case "accepted":
+    case "terms_accepted":
+    case "rescheduled":
+      return match
+        ? `${matchLabel} · ${totalLabel} each · ${match.economy.statusLabel}`
+        : `${formatActivityTitle(activity)} · Match #${activity.scheduledMatchId}`;
+    case "creator_funded":
+      return match
+        ? `${match.challenger.name} locked ${totalLabel}`
+        : `Creator locked ${totalLabel}`;
+    case "opponent_funded":
+      return match
+        ? `${match.challenged.name} locked ${totalLabel}`
+        : `Opponent locked ${totalLabel}`;
+    case "left_checked_in":
+    case "right_checked_in":
+      return `${activity.actorName || "Player"} checked in`;
+    case "live_confirmed":
+      return match ? `${matchLabel} · Game detected` : `Game detected · Match #${activity.scheduledMatchId}`;
+    case "completed":
+      return match ? `${matchLabel} · ${match.economy.resolution.label || "Resolved"}` : "Match completed";
+    case "refund_sent": {
+      const amount = metadataNumber(activity, "amountWolo");
+      const txHash = metadataString(activity, "txHash");
+      return `Refund sent${amount ? ` · ${amount.toLocaleString()} WOLO` : ""}${txHash ? ` · tx ${shortHash(txHash)}` : ""}`;
+    }
+    case "guarantee_forfeited_to_treasury": {
+      const amount = metadataNumber(activity, "amountWolo");
+      const txHash = metadataString(activity, "txHash");
+      return `Guarantee to Community Treasury${amount ? ` · ${amount.toLocaleString()} WOLO` : ""}${txHash ? ` · tx ${shortHash(txHash)}` : ""}`;
+    }
+    case "scheduled_settlement_completed":
+      return `Escrow settlement completed · Match #${activity.scheduledMatchId}`;
+    case "scheduled_settlement_failed":
+      return activity.detail || `Escrow settlement failed · Match #${activity.scheduledMatchId}`;
+    case "declined":
+      return `Challenge declined · Match #${activity.scheduledMatchId}`;
+    case "cancelled":
+    case "canceled":
+      return `Challenge cancelled · Match #${activity.scheduledMatchId}`;
+    case "no_show_left":
+    case "no_show_right":
+    case "double_no_show":
+      return `No-show resolved · Match #${activity.scheduledMatchId}`;
+    case "forfeited":
+      return `Match forfeited · Match #${activity.scheduledMatchId}`;
+    default:
+      return match ? `${matchLabel} · ${match.economy.statusLabel}` : `${formatActivityTitle(activity)} · Match #${activity.scheduledMatchId}`;
+  }
+}
+
 export default function ChallengeWorkspace() {
   const { loading: authLoading, isAuthenticated, uid } = useUserAuth();
-  const { timeDisplayMode, setTimeDisplayMode, browserTimeZone } = useLobbyAppearance();
+  const { status: walletStatus, address: connectedWalletAddress, connect: connectKeplr } = useKeplr();
+  const { timeDisplayMode, setTimeDisplayMode, timeClockMode, browserTimeZone } = useLobbyAppearance();
+  const scheduleFormId = "schedule-game";
   const [snapshot, setSnapshot] = useState<ChallengeHubSnapshot>(EMPTY_SNAPSHOT);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingPhase, setSavingPhase] = useState<"idle" | "connecting" | "creating" | "funding" | "recording">("idle");
   const [actionState, setActionState] = useState<ScheduledMatchCardActionState>({
     challengeId: null,
     kind: null,
   });
+  const [preferenceBusyId, setPreferenceBusyId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [challengedUid, setChallengedUid] = useState("");
-  const [scheduledAt, setScheduledAt] = useState(() => defaultScheduledAtValue());
+  const [scheduledAt, setScheduledAt] = useState("");
   const [challengeNote, setChallengeNote] = useState("");
+  const [wagerAmountWolo, setWagerAmountWolo] = useState(String(CHALLENGE_DEFAULT_WAGER_WOLO));
+  const [guaranteeAmountWolo, setGuaranteeAmountWolo] = useState(
+    String(CHALLENGE_DEFAULT_GUARANTEE_WOLO)
+  );
+  const [focusedMatchId, setFocusedMatchId] = useState<number | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
@@ -137,49 +303,151 @@ export default function ChallengeWorkspace() {
     };
   }, [authLoading, isAuthenticated]);
 
+  useEffect(() => {
+    setScheduledAt(defaultScheduledAtValue());
+  }, []);
+
   const pendingIncomingCount = useMemo(
     () =>
       snapshot.scheduledMatches.filter(
-        (match) => match.displayState === "pending" && match.challenged.uid === uid
+        (match) => ["proposed", "pending"].includes(match.displayState) && match.challenged.uid === uid
       ).length,
     [snapshot.scheduledMatches, uid]
   );
 
   const activeRunwayCount = useMemo(
     () =>
+      snapshot.scheduledMatches.filter((match) => ACTIVE_RUNWAY_STATES.includes(match.displayState))
+        .length,
+    [snapshot.scheduledMatches]
+  );
+
+  const fundedCount = useMemo(
+    () =>
       snapshot.scheduledMatches.filter((match) =>
-        ["pending", "accepted", "live"].includes(match.displayState)
+        ["creator_funded", "opponent_funded", "funded", "checkin_open"].includes(match.displayState)
       ).length,
     [snapshot.scheduledMatches]
   );
 
   const readyCount = useMemo(
-    () => snapshot.scheduledMatches.filter((match) => match.displayState === "accepted").length,
+    () =>
+      snapshot.scheduledMatches.filter((match) =>
+        ["ready", "left_checked_in", "right_checked_in", "live"].includes(match.displayState)
+      ).length,
     [snapshot.scheduledMatches]
   );
 
   const activeRunwayMatches = useMemo(
-    () =>
-      snapshot.scheduledMatches.filter((match) =>
-        ["pending", "accepted", "live"].includes(match.displayState)
-      ),
+    () => snapshot.scheduledMatches.filter((match) => ACTIVE_RUNWAY_STATES.includes(match.displayState)),
     [snapshot.scheduledMatches]
   );
 
-  const historyMatches = useMemo(
-    () => snapshot.historyMatches.slice(0, 8),
-    [snapshot.historyMatches]
-  );
+  const historyMatches = useMemo(() => snapshot.historyMatches.slice(0, 8), [snapshot.historyMatches]);
 
-  const recentActivities = useMemo(
-    () => snapshot.activities.slice(0, 8),
-    [snapshot.activities]
-  );
+  const recentActivities = useMemo(() => snapshot.activities.slice(0, 8), [snapshot.activities]);
+  const activityMatchById = useMemo(() => {
+    const matches = new Map<number, ActivityMatch>();
+    for (const match of [...snapshot.scheduledMatches, ...snapshot.historyMatches]) {
+      matches.set(match.id, match);
+    }
+    return matches;
+  }, [snapshot.historyMatches, snapshot.scheduledMatches]);
 
-  const scheduledPreview = useMemo(
-    () => parseUtcDateTimeInputValue(scheduledAt),
-    [scheduledAt]
+  const scheduledPreview = useMemo(() => parseLocalDateTimeInputValue(scheduledAt), [scheduledAt]);
+  const schedulePreviewLocal = useMemo(
+    () =>
+      formatDateTime(
+        scheduledPreview,
+        {
+          timeDisplayMode: "local",
+          timeClockMode,
+          timezoneOverride: browserTimeZone,
+        },
+        {
+          browserTimeZone,
+          includeZone: true,
+        }
+      ),
+    [browserTimeZone, scheduledPreview, timeClockMode]
   );
+  const schedulePreviewUtc = useMemo(
+    () =>
+      formatDateTime(
+        scheduledPreview,
+        {
+          timeDisplayMode: "utc",
+          timeClockMode,
+          timezoneOverride: null,
+        },
+        {
+          includeZone: true,
+        }
+      ),
+    [scheduledPreview, timeClockMode]
+  );
+  const schedulePreviewUtcCompact = useMemo(
+    () =>
+      formatDateTime(
+        scheduledPreview,
+        {
+          timeDisplayMode: "utc",
+          timeClockMode,
+          timezoneOverride: null,
+        },
+        {
+          includeZone: false,
+        }
+      ),
+    [scheduledPreview, timeClockMode]
+  );
+  const totalFundingPreview = useMemo(
+    () =>
+      (Number.parseInt(wagerAmountWolo, 10) || 0) + (Number.parseInt(guaranteeAmountWolo, 10) || 0),
+    [guaranteeAmountWolo, wagerAmountWolo]
+  );
+  const challengeEscrowReady = Boolean(challengeFundingEscrowAddress());
+  const createButtonLabel = !challengeEscrowReady
+    ? "Escrow Not Wired"
+    : savingPhase === "connecting"
+      ? "Connecting..."
+      : walletStatus !== "connected"
+        ? "Connect Wallet"
+        : savingPhase === "creating"
+          ? "Creating..."
+          : savingPhase === "funding"
+            ? "Sign Escrow"
+            : savingPhase === "recording"
+              ? "Recording..."
+              : `Create + Fund ${totalFundingPreview.toLocaleString()} WOLO`;
+  const focusedMatch = useMemo(
+    () => activeRunwayMatches.find((match) => match.id === focusedMatchId) || activeRunwayMatches[0] || null,
+    [activeRunwayMatches, focusedMatchId]
+  );
+  const focusedCounterpart = useMemo(() => {
+    if (!focusedMatch || !uid) {
+      return null;
+    }
+
+    return focusedMatch.challenger.uid === uid ? focusedMatch.challenged : focusedMatch.challenger;
+  }, [focusedMatch, uid]);
+
+  useEffect(() => {
+    if (activeRunwayMatches.length === 0) {
+      setFocusedMatchId(null);
+      return;
+    }
+
+    setFocusedMatchId((current) =>
+      current && activeRunwayMatches.some((match) => match.id === current)
+        ? current
+        : activeRunwayMatches[0].id
+    );
+  }, [activeRunwayMatches]);
+
+  function toggleSiteTimePreference() {
+    setTimeDisplayMode(timeDisplayMode === "local" ? "utc" : "local");
+  }
 
   async function updateMatch(
     challengeId: number,
@@ -187,6 +455,10 @@ export default function ChallengeWorkspace() {
     extra?: {
       scheduledAt?: string;
       challengeNote?: string;
+      wagerAmountWolo?: number;
+      guaranteeAmountWolo?: number;
+      fundingTxHash?: string;
+      fundingWalletAddress?: string;
     }
   ) {
     setActionState({
@@ -219,15 +491,21 @@ export default function ChallengeWorkspace() {
       setSnapshot(payload);
       setNotice(
         action === "accept"
-          ? "Challenge accepted. Ready on board."
+          ? "Terms accepted."
           : action === "decline"
             ? "Challenge declined."
             : action === "cancel"
               ? "Challenge cancelled."
-              : "New start time sent. Waiting on acceptance again."
+              : action === "fund"
+                ? "Funding recorded on the rail."
+                : action === "check_in"
+                  ? "Check-in locked before start."
+                  : "New timing and terms sent."
       );
     } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : "Challenge update failed.");
+      const message = updateError instanceof Error ? updateError.message : "Challenge update failed.";
+      setError(message);
+      throw new Error(message);
     } finally {
       setActionState({
         challengeId: null,
@@ -236,20 +514,94 @@ export default function ChallengeWorkspace() {
     }
   }
 
+  async function updatePreference(
+    challengeId: number,
+    payload: {
+      favorite: boolean;
+      bookmarked: boolean;
+      colorTag: ScheduledMatchColorTag | null;
+    }
+  ) {
+    setPreferenceBusyId(challengeId);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/challenges/${challengeId}/preference`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const responsePayload = (await response.json().catch(() => ({}))) as {
+        detail?: string;
+        preference?: ScheduledMatchViewerPreference;
+      };
+
+      if (!response.ok || !responsePayload.preference) {
+        throw new Error(responsePayload.detail || "Could not update this private tile preference.");
+      }
+
+      const nextPreference = responsePayload.preference;
+      setSnapshot((current) => ({
+        ...current,
+        scheduledMatches: current.scheduledMatches.map((match) =>
+          match.id === challengeId ? { ...match, viewerPreference: nextPreference } : match
+        ),
+        historyMatches: current.historyMatches.map((match) =>
+          match.id === challengeId ? { ...match, viewerPreference: nextPreference } : match
+        ),
+      }));
+    } catch (updateError) {
+      setError(
+        updateError instanceof Error
+          ? updateError.message
+          : "Could not update this private tile preference."
+      );
+    } finally {
+      setPreferenceBusyId((current) => (current === challengeId ? null : current));
+    }
+  }
+
   async function submitChallenge(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
+    setSavingPhase("creating");
     setError(null);
     setNotice(null);
 
-    const parsedScheduledAt = parseUtcDateTimeInputValue(scheduledAt);
-    if (!parsedScheduledAt) {
-      setError("Choose a valid UTC start time.");
+    if (!challengeFundingEscrowAddress()) {
+      setError("Challenge escrow is not configured yet.");
       setSaving(false);
+      setSavingPhase("idle");
+      return;
+    }
+
+    if (walletStatus !== "connected" || !connectedWalletAddress) {
+      try {
+        setSavingPhase("connecting");
+        await connectKeplr();
+      } catch (walletError) {
+        setError(walletError instanceof Error ? walletError.message : "Connect wallet before creating.");
+      } finally {
+        setSaving(false);
+        setSavingPhase("idle");
+      }
+      return;
+    }
+
+    const parsedScheduledAt = parseLocalDateTimeInputValue(scheduledAt);
+    if (!parsedScheduledAt) {
+      setError("Choose a valid start time.");
+      setSaving(false);
+      setSavingPhase("idle");
       return;
     }
 
     try {
+      const parsedWagerAmountWolo = Number.parseInt(wagerAmountWolo, 10);
+      const parsedGuaranteeAmountWolo = Number.parseInt(guaranteeAmountWolo, 10);
       const response = await fetch("/api/challenges", {
         method: "POST",
         headers: {
@@ -259,11 +611,13 @@ export default function ChallengeWorkspace() {
           challengedUid,
           scheduledAt: parsedScheduledAt.toISOString(),
           challengeNote,
+          wagerAmountWolo: parsedWagerAmountWolo,
+          guaranteeAmountWolo: parsedGuaranteeAmountWolo,
         }),
       });
 
       const payload = (await response.json().catch(() => null)) as
-        | (ChallengeHubSnapshot & { detail?: string })
+        | ChallengeCreateSnapshot
         | null;
 
       if (!response.ok || !payload) {
@@ -271,14 +625,56 @@ export default function ChallengeWorkspace() {
       }
 
       setSnapshot(payload);
-      setNotice("Challenge sent to inbox and board.");
+      const duplicateWarning = payload.duplicateWarning;
+      const createdChallengeId = payload.createdChallengeId;
+      if (!createdChallengeId || !Number.isFinite(createdChallengeId)) {
+        throw new Error("Challenge created, but the funding rail did not return a match id.");
+      }
+
+      setSavingPhase("funding");
+      const fundingResult = await fundChallengeEscrow({
+        challengeId: createdChallengeId,
+        amountWolo: parsedWagerAmountWolo + parsedGuaranteeAmountWolo,
+        fallbackWalletAddress: connectedWalletAddress,
+      });
+
+      setSavingPhase("recording");
+      const fundResponse = await fetch(`/api/challenges/${createdChallengeId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "fund",
+          fundingTxHash: fundingResult.fundingTxHash,
+          fundingWalletAddress: fundingResult.walletAddress,
+        }),
+      });
+
+      const fundedPayload = (await fundResponse.json().catch(() => null)) as
+        | (ChallengeHubSnapshot & { detail?: string })
+        | null;
+
+      if (!fundResponse.ok || !fundedPayload) {
+        throw new Error(fundedPayload?.detail || "Challenge was created, but funding could not be recorded.");
+      }
+
+      setSnapshot(fundedPayload);
+      setNotice(
+        duplicateWarning
+          ? `${duplicateWarning} Challenge funded. Opponent can accept + fund.`
+          : "Challenge funded. Opponent can accept + fund."
+      );
       setChallengedUid("");
       setChallengeNote("");
       setScheduledAt(defaultScheduledAtValue());
+      setWagerAmountWolo(String(CHALLENGE_DEFAULT_WAGER_WOLO));
+      setGuaranteeAmountWolo(String(CHALLENGE_DEFAULT_GUARANTEE_WOLO));
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to schedule the game.");
     } finally {
       setSaving(false);
+      setSavingPhase("idle");
     }
   }
 
@@ -295,21 +691,42 @@ export default function ChallengeWorkspace() {
             <div className="flex flex-wrap gap-2">
               <HeroPill>{snapshot.candidates.length} players available</HeroPill>
               <HeroPill>{pendingIncomingCount} awaiting you</HeroPill>
-              <HeroPill live>{readyCount} locked in</HeroPill>
+              <HeroPill live>{readyCount} match-ready</HeroPill>
             </div>
 
             <div className="flex flex-wrap gap-3">
               <Link
+                href={`#${scheduleFormId}`}
+                className="group inline-flex items-center gap-3 rounded-full border border-amber-200/18 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(245,158,11,0.08))] px-3 py-2 text-white shadow-[0_18px_34px_rgba(245,158,11,0.12)] transition hover:border-amber-200/30 hover:bg-[linear-gradient(135deg,rgba(251,191,36,0.22),rgba(245,158,11,0.12))]"
+              >
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-amber-200/20 bg-amber-300/15 text-amber-50">
+                  <Plus className="h-4 w-4" />
+                </span>
+                <span className="text-left">
+                  <span className="block text-sm font-semibold text-white">+ Game</span>
+                  <span className="block text-[11px] uppercase tracking-[0.2em] text-amber-100/70">
+                    Start a scheduled duel
+                  </span>
+                </span>
+                <ArrowUpRight className="h-4 w-4 text-amber-50/80 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+              </Link>
+              <Link
                 href="/live-games"
-                className="rounded-full bg-amber-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200"
+                className="inline-flex min-h-[3rem] items-center justify-center rounded-full bg-amber-300 px-5 py-3 text-center text-sm font-semibold leading-none text-slate-950 transition hover:bg-amber-200"
               >
                 Back To Live Games
               </Link>
               <Link
                 href="/players"
-                className="rounded-full border border-white/15 px-5 py-3 text-sm text-white/85 transition hover:border-white/30 hover:text-white"
+                className="inline-flex min-h-[3rem] items-center justify-center rounded-full border border-white/15 px-5 py-3 text-sm text-white/85 transition hover:border-white/30 hover:text-white"
               >
                 Browse Players
+              </Link>
+              <Link
+                href="/betting-mechanics"
+                className="inline-flex min-h-[3rem] items-center justify-center rounded-full border border-white/15 px-5 py-3 text-sm text-white/85 transition hover:border-white/30 hover:text-white"
+              >
+                Mechanics
               </Link>
             </div>
           </div>
@@ -317,17 +734,27 @@ export default function ChallengeWorkspace() {
           <div className="grid gap-3 sm:grid-cols-4 lg:grid-cols-2">
             <StatCard label="Your Runway" value={String(activeRunwayCount)} />
             <StatCard label="Incoming" value={String(pendingIncomingCount)} />
-            <StatCard label="Ready" value={String(readyCount)} live helper="Accepted scheduled games" />
-            <StatCard label="Ledger" value={String(snapshot.record.total)} helper="Recent challenge history" />
+            <StatCard label="Funded" value={String(fundedCount)} helper="Money locked on the rail" />
+            <StatCard label="Ready" value={String(readyCount)} live helper="Checked in or live" />
           </div>
         </div>
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr]">
         <section className="space-y-6">
-          <section className="rounded-[1.8rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6">
-            <div className="text-xs uppercase tracking-[0.35em] text-amber-200/70">New Match</div>
-            <h2 className="mt-2 text-2xl font-semibold text-white">Schedule New Game</h2>
+          <section
+            id={scheduleFormId}
+            className="rounded-[1.8rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-xs uppercase tracking-[0.35em] text-amber-200/70">New Match</div>
+                <h2 className="mt-2 text-2xl font-semibold text-white">Challenge + Fund</h2>
+              </div>
+              <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-300">
+                Wallet escrow
+              </div>
+            </div>
 
             {authLoading || loading ? (
               <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 px-4 py-5 text-sm text-slate-300">
@@ -351,7 +778,7 @@ export default function ChallengeWorkspace() {
                   <select
                     value={challengedUid}
                     onChange={(event) => setChallengedUid(event.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-amber-300/50"
+                    className="w-full cursor-pointer rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition hover:border-white/20 focus:border-amber-300/50"
                   >
                     <option value="">Choose a warrior</option>
                     {snapshot.candidates.map((candidate) => (
@@ -365,24 +792,14 @@ export default function ChallengeWorkspace() {
                 </label>
 
                 <div className="space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="block text-sm text-slate-200">Start Time</span>
                     <button
                       type="button"
-                      onClick={() =>
-                        setTimeDisplayMode(timeDisplayMode === "utc" ? "local" : "utc")
-                      }
-                      className="text-left text-sm text-slate-300 transition hover:text-white"
+                      onClick={toggleSiteTimePreference}
+                      className="text-[11px] text-slate-400 transition hover:text-white"
                     >
-                      Start Time (UTC)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setTimeDisplayMode(timeDisplayMode === "utc" ? "local" : "utc")
-                      }
-                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-300 transition hover:border-white/25 hover:text-white"
-                    >
-                      Show {timeDisplayMode === "utc" ? "Local" : "UTC"} By Default
+                      {timeDisplayMode === "local" ? "Use UTC sitewide" : "Use Local sitewide"}
                     </button>
                   </div>
                   <input
@@ -391,30 +808,47 @@ export default function ChallengeWorkspace() {
                     onChange={(event) => setScheduledAt(event.target.value)}
                     className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-amber-300/50"
                   />
-                  <div className="mt-2 space-y-2 text-xs text-slate-500">
-                    <div>
-                      Scheduled matches are stored in UTC so both players share one universal clock.
+                  <div className="rounded-[1.35rem] border border-white/10 bg-white/[0.04] px-4 py-4 text-slate-300">
+                    <div className="text-base font-medium text-white sm:text-lg">
+                      {schedulePreviewLocal === "—" ? "Pick a start time." : schedulePreviewLocal}
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3 text-slate-300">
-                      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
-                        Your site default
-                      </div>
-                      <div className="mt-2">
-                        {scheduledPreview ? (
-                          <TimeDisplayText
-                            value={scheduledPreview}
-                            className="font-medium text-white"
-                            bubbleClassName="max-w-[16rem] text-center"
-                          />
-                        ) : (
-                          "Pick a valid start time to preview it."
-                        )}
-                      </div>
-                      <div className="mt-2 text-[11px] text-slate-400">
-                        {timeDisplayMode === "local"
-                          ? `Local display${browserTimeZone ? ` (${browserTimeZone})` : ""} with UTC on hover or tap.`
-                          : "UTC display with your browser-local time on hover or tap."}
-                      </div>
+                    <div className="mt-2 text-xs text-slate-400">
+                      {schedulePreviewUtc === "—"
+                        ? "UTC anchor appears here."
+                        : `UTC ${schedulePreviewUtcCompact}`}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <label className="block space-y-2">
+                    <span className="text-sm text-slate-300">Wolo Wager</span>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={wagerAmountWolo}
+                      onChange={(event) => setWagerAmountWolo(event.target.value)}
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-amber-300/50"
+                    />
+                  </label>
+                  <label className="block space-y-2">
+                    <span className="text-sm text-slate-300">Match Guarantee</span>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={guaranteeAmountWolo}
+                      onChange={(event) => setGuaranteeAmountWolo(event.target.value)}
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-amber-300/50"
+                    />
+                  </label>
+                  <div className="rounded-[1.35rem] border border-amber-300/18 bg-amber-400/10 px-4 py-4">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-amber-100/70">
+                      Funding each
+                    </div>
+                    <div className="mt-2 text-lg font-semibold text-white">
+                      {totalFundingPreview.toLocaleString()} WOLO
                     </div>
                   </div>
                 </div>
@@ -450,37 +884,122 @@ export default function ChallengeWorkspace() {
 
                 <button
                   type="submit"
-                  disabled={saving}
-                  className="rounded-full bg-amber-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={saving || !challengeEscrowReady}
+                  className="inline-flex items-center gap-2 rounded-full bg-amber-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {saving ? "Scheduling..." : "Schedule Match"}
+                  {walletStatus !== "connected" ? <Wallet className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                  {createButtonLabel}
                 </button>
               </form>
             )}
           </section>
 
+          {focusedMatch ? (
+            <section className="rounded-[1.8rem] border border-white/10 bg-slate-950/75 p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-xs uppercase tracking-[0.35em] text-cyan-200/70">
+                  Coordination Rail
+                </div>
+                <h2 className="mt-2 text-xl font-semibold text-white">Scheduling Line</h2>
+              </div>
+              <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
+                Match #{focusedMatch.id}
+              </div>
+            </div>
+
+            {activeRunwayMatches.length > 1 ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {activeRunwayMatches.map((match) => {
+                  const counterpart =
+                    uid && match.challenger.uid === uid ? match.challenged : match.challenger;
+                  const active = focusedMatch.id === match.id;
+                  return (
+                    <button
+                      key={`focus-${match.id}`}
+                      type="button"
+                      onClick={() => setFocusedMatchId(match.id)}
+                      className={`rounded-full px-3 py-1.5 text-left text-xs transition ${
+                        active
+                          ? "border border-amber-300/22 bg-amber-400/10 text-amber-50 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.14)]"
+                          : "border border-white/10 bg-white/[0.04] text-slate-300 hover:border-white/20 hover:text-white"
+                      }`}
+                    >
+                      <span className="font-semibold">{counterpart.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[1.1rem] border border-white/10 bg-white/[0.04] px-3 py-3 text-xs text-slate-300">
+              <Clock3 className="h-4 w-4 shrink-0 text-cyan-100/70" />
+              <span className="min-w-0 truncate font-semibold text-white">
+                {focusedMatch.challenger.name} vs {focusedMatch.challenged.name}
+              </span>
+              <span className="text-slate-600">·</span>
+              <span>{focusedMatch.terms.totalFundingWolo.toLocaleString()} WOLO each</span>
+              <span className="text-slate-600">·</span>
+              <span>
+                {formatDateTime(
+                  focusedMatch.scheduledAt,
+                  {
+                    timeDisplayMode: "local",
+                    timeClockMode,
+                    timezoneOverride: browserTimeZone,
+                  },
+                  {
+                    browserTimeZone,
+                    includeZone: false,
+                  }
+                )}
+              </span>
+              <span className="text-slate-600">·</span>
+              <span>{focusedMatch.economy.statusLabel}</span>
+              {focusedMatch.challengeNote ? (
+                <>
+                  <span className="text-slate-600">·</span>
+                  <span className="min-w-0 truncate text-slate-400">{focusedMatch.challengeNote}</span>
+                </>
+              ) : null}
+              {focusedCounterpart ? (
+                <Link
+                  href={`/contact-emaren?user=${encodeURIComponent(focusedCounterpart.uid)}`}
+                  className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.05] px-3 py-1.5 text-[11px] font-medium text-white transition hover:border-white/25 hover:bg-white/[0.08]"
+                >
+                  <MessageSquareMore className="h-3.5 w-3.5" />
+                  Thread
+                </Link>
+              ) : null}
+            </div>
+            </section>
+          ) : null}
+
           <section className="rounded-[1.8rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs uppercase tracking-[0.35em] text-slate-300/70">
                   Challenge Record
                 </div>
-                <h2 className="mt-2 text-2xl font-semibold text-white">Your Numbers</h2>
+                <h2 className="mt-2 break-words text-2xl font-semibold text-white">Your Numbers</h2>
               </div>
-              <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
+              <div className="shrink-0 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
                 {snapshot.record.total} total
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-5 grid grid-cols-2 gap-2.5 sm:gap-3">
               <StatCard label="Wins" value={String(snapshot.record.wins)} />
               <StatCard label="Losses" value={String(snapshot.record.losses)} />
-              <StatCard label="Completed" value={String(snapshot.record.completed)} />
-              <StatCard label="Forfeited" value={String(snapshot.record.forfeited)} />
               <StatCard label="Pending" value={String(snapshot.record.pending)} />
               <StatCard label="Accepted" value={String(snapshot.record.accepted)} />
+              <StatCard label="Funded" value={String(snapshot.record.funded)} />
+              <StatCard label="Ready" value={String(snapshot.record.ready)} />
+              <StatCard label="Completed" value={String(snapshot.record.completed)} />
+              <StatCard label="No-show" value={String(snapshot.record.noShows)} />
+              <StatCard label="Forfeited" value={String(snapshot.record.forfeited)} />
               <StatCard label="Declined" value={String(snapshot.record.declined)} />
-              <StatCard label="Cancelled" value={String(snapshot.record.cancelled)} />
+              <StatCard label="Canceled" value={String(snapshot.record.cancelled)} />
             </div>
           </section>
         </section>
@@ -508,12 +1027,18 @@ export default function ChallengeWorkspace() {
                     key={match.id}
                     match={match}
                     viewerUid={uid}
+                    defaultViewMode="detail"
+                    stacked
+                    localTimePrimary
+                    serverNow={snapshot.serverNow}
                     onAccept={(challengeId) => updateMatch(challengeId, "accept")}
                     onDecline={(challengeId) => updateMatch(challengeId, "decline")}
                     onCancel={(challengeId) => updateMatch(challengeId, "cancel")}
-                    onReschedule={(challengeId, payload) =>
-                      updateMatch(challengeId, "reschedule", payload)
-                    }
+                    onReschedule={(challengeId, payload) => updateMatch(challengeId, "reschedule", payload)}
+                    onFund={(challengeId, payload) => updateMatch(challengeId, "fund", payload)}
+                    onCheckIn={(challengeId) => updateMatch(challengeId, "check_in")}
+                    onPreferenceChange={updatePreference}
+                    preferenceBusy={preferenceBusyId === match.id}
                     actionState={actionState}
                   />
                 ))
@@ -543,25 +1068,20 @@ export default function ChallengeWorkspace() {
                 recentActivities.map((activity) => (
                   <div
                     key={`${activity.scheduledMatchId}-${activity.id}`}
-                    className="rounded-[1.25rem] border border-white/10 bg-white/[0.04] px-4 py-3"
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-[1rem] border border-white/10 bg-white/[0.04] px-3 py-2.5"
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-white">
-                          {formatActivityTitle(activity)}
-                        </div>
-                        <div className="mt-1 text-[11px] uppercase tracking-[0.22em] text-slate-500">
-                          {activity.actorName ? `${activity.actorName} · ` : ""}
-                          <TimeDisplayText value={activity.createdAt} className="text-slate-400" />
-                        </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold text-white">
+                        {formatActivityCompact(activity, activityMatchById.get(activity.scheduledMatchId))}
                       </div>
-                      <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-300">
-                        Match #{activity.scheduledMatchId}
+                      <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                        {activity.actorName ? `${activity.actorName} · ` : ""}
+                        <TimeDisplayText value={activity.createdAt} className="text-slate-400" />
                       </div>
                     </div>
-                    {activity.detail ? (
-                      <div className="mt-3 text-sm leading-6 text-slate-300">{activity.detail}</div>
-                    ) : null}
+                    <div className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-slate-300">
+                      #{activity.scheduledMatchId}
+                    </div>
                   </div>
                 ))
               )}
@@ -592,14 +1112,19 @@ export default function ChallengeWorkspace() {
                     key={`history-${match.id}`}
                     match={match}
                     viewerUid={uid}
+                    localTimePrimary
+                    serverNow={snapshot.serverNow}
                     onAccept={(challengeId) => updateMatch(challengeId, "accept")}
                     onDecline={(challengeId) => updateMatch(challengeId, "decline")}
                     onCancel={(challengeId) => updateMatch(challengeId, "cancel")}
-                    onReschedule={(challengeId, payload) =>
-                      updateMatch(challengeId, "reschedule", payload)
-                    }
+                    onReschedule={(challengeId, payload) => updateMatch(challengeId, "reschedule", payload)}
+                    onFund={(challengeId, payload) => updateMatch(challengeId, "fund", payload)}
+                    onCheckIn={(challengeId) => updateMatch(challengeId, "check_in")}
+                    onPreferenceChange={updatePreference}
+                    preferenceBusy={preferenceBusyId === match.id}
                     actionState={actionState}
                     compact
+                    defaultViewMode="summary"
                   />
                 ))
               )}
@@ -643,17 +1168,19 @@ function StatCard({
   helper?: string;
 }) {
   return (
-    <div className="rounded-[1.4rem] border border-white/10 bg-white/5 px-4 py-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{label}</div>
+    <div className="min-w-0 rounded-[1.22rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.055),rgba(255,255,255,0.025))] px-3 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:px-4 sm:py-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 truncate whitespace-nowrap text-[10px] uppercase tracking-[0.16em] text-slate-400 sm:text-[11px]">
+          {label}
+        </div>
         {live ? (
-          <div className="rounded-full border border-emerald-300/25 bg-emerald-400/10 px-2.5 py-1 text-[11px] text-emerald-100">
+          <div className="shrink-0 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-2.5 py-1 text-[11px] text-emerald-100">
             live
           </div>
         ) : null}
       </div>
-      <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
-      {helper ? <div className="mt-1 text-xs text-slate-400">{helper}</div> : null}
+      <div className="mt-2 text-2xl font-semibold leading-none text-white">{value}</div>
+      {helper ? <div className="mt-1 text-xs leading-5 text-slate-400">{helper}</div> : null}
     </div>
   );
 }

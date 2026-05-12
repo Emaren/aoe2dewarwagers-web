@@ -14,8 +14,6 @@ export type LiveGameSession = {
   mapName: string | null;
   durationSeconds: number | null;
   originalFilename: string | null;
-  parseReason: string | null;
-  betArmingEligible: boolean;
   disconnectDetected: boolean;
   winner: string | null;
   state: "live" | "completed";
@@ -34,8 +32,6 @@ export type LiveGameSession = {
 const LIVE_SESSION_FRESHNESS_MS = 12 * 60 * 1000;
 export const LIVE_SESSION_LINGER_MS = 15 * 60 * 1000;
 const SUPERSEDED_PARSE_REASON = "superseded_by_later_upload";
-const WATCHER_FINAL_METADATA_PARSE_REASON = "watcher_final_metadata";
-const WATCHER_FINAL_UNPARSED_PARSE_REASON = "watcher_final_unparsed";
 
 type SessionRow = {
   id: number;
@@ -109,29 +105,6 @@ function getRowActivityTime(row: Pick<SessionRow, "timestamp" | "createdAt">) {
   return row.timestamp ?? row.createdAt;
 }
 
-function readCompletedSignal(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-
-  return (value as Record<string, unknown>).completed === true;
-}
-
-function readBetArmingEligible(value: unknown, parseReason?: string | null) {
-  if (
-    parseReason === WATCHER_FINAL_METADATA_PARSE_REASON ||
-    parseReason === WATCHER_FINAL_UNPARSED_PARSE_REASON
-  ) {
-    return false;
-  }
-
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return true;
-  }
-
-  return (value as Record<string, unknown>).bet_arming_eligible !== false;
-}
-
 function buildSessionFromRow(
   row: SessionRow,
   sessionKey: string,
@@ -153,8 +126,6 @@ function buildSessionFromRow(
         ? row.game_duration
         : null,
     originalFilename: row.original_filename ?? null,
-    parseReason: row.parse_reason ?? null,
-    betArmingEligible: readBetArmingEligible(row.key_events, row.parse_reason),
     disconnectDetected: row.disconnect_detected,
     winner: row.winner ?? null,
     state,
@@ -259,10 +230,8 @@ export async function loadLiveSessionSnapshot(prisma: PrismaClient): Promise<{
         game_duration: true,
         winner: true,
         players: true,
-        key_events: true,
         disconnect_detected: true,
         parse_source: true,
-        parse_reason: true,
         user: {
           select: {
             uid: true,
@@ -312,7 +281,6 @@ export async function loadLiveSessionSnapshot(prisma: PrismaClient): Promise<{
   for (const [sessionKey, row] of latestLiveBySession.entries()) {
     const finalRow = latestFinalBySession.get(sessionKey);
     const liveActivityAt = getRowActivityTime(row).getTime();
-    const liveCompleted = readCompletedSignal(row.key_events);
 
     if (finalRow) {
       const finalActivityAt = getRowActivityTime(finalRow).getTime();
@@ -322,13 +290,6 @@ export async function loadLiveSessionSnapshot(prisma: PrismaClient): Promise<{
         }
         continue;
       }
-    }
-
-    if (liveCompleted) {
-      if (liveActivityAt >= lingerCutoff) {
-        recentlyCompletedSessions.push(buildSessionFromRow(row, sessionKey, "completed"));
-      }
-      continue;
     }
 
     activeSessions.push(buildSessionFromRow(row, sessionKey, "live"));

@@ -1,78 +1,376 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import Link from "next/link";
 
 import { useKeplr } from "@/hooks/use-keplr";
 import { useWoloBalance } from "@/hooks/useWoloBalance";
+import { WOLO_KEPLR_DOWNLOAD_URL } from "@/lib/woloChain";
 
 const WALLET_ACTIONS = [
-  { label: "Stake Tokens", className: "bg-emerald-700 hover:bg-emerald-600" },
-  { label: "Claim Rewards", className: "bg-amber-700 hover:bg-amber-600" },
-  { label: "View Transaction History", className: "bg-purple-700 hover:bg-purple-600" },
-  { label: "Manage Keys", className: "bg-pink-700 hover:bg-pink-600" },
-  { label: "Refresh Balance", className: "bg-indigo-700 hover:bg-indigo-600" },
+  {
+    label: "Open WoloChain",
+    href: "/wolo",
+    description: "View supply, node status, faucet, and chain context.",
+    className: "border-amber-300/20 bg-amber-400/10 text-amber-100 hover:bg-amber-400/15",
+  },
+  {
+    label: "Download Watcher",
+    href: "/download",
+    description: "Install the replay watcher before live games.",
+    className: "border-sky-300/20 bg-sky-400/10 text-sky-100 hover:bg-sky-400/15",
+  },
+  {
+    label: "Open Bets",
+    href: "/bets",
+    description: "See active markets and match activity.",
+    className: "border-emerald-300/20 bg-emerald-400/10 text-emerald-100 hover:bg-emerald-400/15",
+  },
 ];
 
 function formatWalletBalance(rawBalance?: string) {
   const amount = Number(rawBalance ?? "0");
-  if (!Number.isFinite(amount)) {
-    return "0.00";
-  }
-
+  if (!Number.isFinite(amount)) return "0.00";
   return (amount / 1_000_000).toFixed(2);
 }
 
-export default function WalletDashboardClient() {
-  const { address, status, connect } = useKeplr();
-  const { data: rawBalance, isLoading } = useWoloBalance(address);
-  const formattedBalance = useMemo(() => formatWalletBalance(rawBalance), [rawBalance]);
+async function copyTextToClipboard(value: string) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
+}
+
+function WalletCopyIcon({ copied }: { copied: boolean }) {
+  if (copied) {
+    return (
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        className="h-4 w-4"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M20 6 9 17l-5-5"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.35)]">
-        <div className="space-y-3">
-          <p className="text-xs uppercase tracking-[0.35em] text-amber-200/70">Wallet Status</p>
-          <div className="space-y-2 text-sm text-slate-300">
-            <p>
-              <strong className="text-white">Status:</strong> {status}
-            </p>
-            <p className="break-all">
-              <strong className="text-white">Address:</strong> {address || "Not connected"}
-            </p>
-          </div>
-        </div>
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect
+        x="8"
+        y="8"
+        width="10"
+        height="10"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        d="M6 14H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
 
-        {!address ? (
+function WalletAddressLine({ address }: { address?: string }) {
+  const [copied, setCopied] = useState(false);
+  const value = address?.trim() || "Not connected";
+
+  async function handleCopy() {
+    if (!address) return;
+
+    await copyTextToClipboard(address);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <strong className="text-white">Address</strong>
+
+        {address ? (
           <button
             type="button"
             onClick={() => {
-              void connect();
+              void handleCopy();
             }}
-            className="mt-5 rounded-full bg-blue-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-600"
+            aria-label={copied ? "Address copied" : "Copy wallet address"}
+            title={copied ? "Copied" : "Copy wallet address"}
+            className={`inline-flex h-10 w-10 items-center justify-center rounded-full border transition ${
+              copied
+                ? "border-emerald-300/45 bg-emerald-400/12 text-emerald-100"
+                : "border-white/12 bg-white/5 text-white/85 hover:border-emerald-300/35 hover:bg-emerald-400/10 hover:text-emerald-100"
+            }`}
           >
-            Connect Keplr
+            <WalletCopyIcon copied={copied} />
           </button>
+        ) : null}
+      </div>
+
+      <div className="mt-2 select-all break-all font-mono text-[13px] leading-6 text-slate-100">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+export default function WalletDashboardClient() {
+  const { address, status, connect, disconnect } = useKeplr();
+  const { data: rawBalance, isLoading, refetch } = useWoloBalance(address);
+  const [walletNotice, setWalletNotice] = useState<string | null>(null);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [isBusy, setIsBusy] = useState(false);
+
+  const formattedBalance = useMemo(() => formatWalletBalance(rawBalance), [rawBalance]);
+
+  const keplrMissing = status === "not_installed";
+  const connected = status === "connected";
+  const checking = status === "checking";
+  const connecting = status === "connecting" || checking || isBusy;
+
+  const statusLabel =
+    connected
+      ? "Connected"
+      : status === "checking"
+        ? "Checking wallet"
+        : status === "connecting"
+          ? "Connecting"
+        : keplrMissing
+          ? "Keplr not installed"
+          : "Not connected";
+
+  const primaryLabel = keplrMissing
+    ? "Install Keplr"
+    : connected
+      ? "Refresh Balance"
+      : connecting
+        ? "Connecting..."
+        : "Connect Keplr";
+
+  async function handlePrimaryWalletAction() {
+    setWalletError(null);
+    setWalletNotice(null);
+
+    if (keplrMissing) {
+      window.open(WOLO_KEPLR_DOWNLOAD_URL, "_blank", "noopener,noreferrer");
+      setWalletNotice("Install Keplr, unlock it, then refresh this page.");
+      return;
+    }
+
+    try {
+      setIsBusy(true);
+
+      if (!connected) {
+        await connect();
+        setWalletNotice("Wallet connected. Balance should appear once Keplr returns your Wolo address.");
+        return;
+      }
+
+      await refetch();
+      setWalletNotice("Balance refreshed.");
+    } catch (error) {
+      setWalletError(
+        error instanceof Error
+          ? error.message
+          : "Could not connect Keplr. Check that the extension is installed and unlocked."
+      );
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <section className="overflow-hidden rounded-3xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.13),transparent_30%),linear-gradient(135deg,rgba(15,23,42,0.98),rgba(8,13,26,0.98))] p-5 shadow-[0_24px_80px_rgba(2,6,23,0.35)] sm:p-6">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-amber-200/70">
+              Wallet Status
+            </p>
+
+            <div className="space-y-2 text-sm text-slate-300">
+              <p>
+                <strong className="text-white">Status:</strong> {statusLabel}
+              </p>
+              <WalletAddressLine address={connected ? address : ""} />
+            </div>
+
+            {keplrMissing ? (
+              <p className="max-w-2xl text-sm leading-6 text-slate-300">
+                Keplr is the wallet AoE2DEWarWagers uses for WoloChain. Install it,
+                unlock it, refresh this page, then connect.
+              </p>
+            ) : !connected ? (
+              <p className="max-w-2xl text-sm leading-6 text-slate-300">
+                Keplr is available. Connect once and AoE2DEWarWagers will show your
+                WoloChain address and WOLO balance.
+              </p>
+            ) : (
+              <p className="max-w-2xl text-sm leading-6 text-emerald-100">
+                Wallet connected. Your WOLO balance is live.
+              </p>
+            )}
+          </div>
+
+          <div className="grid min-w-full gap-3 sm:min-w-[18rem]">
+            <button
+              type="button"
+              onClick={() => {
+                void handlePrimaryWalletAction();
+              }}
+              className="rounded-full bg-amber-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-70"
+              disabled={connecting}
+            >
+              {primaryLabel}
+            </button>
+
+            {connected ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setWalletError(null);
+                  setWalletNotice(null);
+                  disconnect();
+                }}
+                className="rounded-full border border-white/12 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/10"
+              >
+                Disconnect
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {walletNotice ? (
+          <div className="mt-5 rounded-2xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+            {walletNotice}
+          </div>
+        ) : null}
+
+        {walletError ? (
+          <div className="mt-5 rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+            {walletError}
+          </div>
         ) : null}
       </section>
 
       <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.35)]">
-        <p className="text-xs uppercase tracking-[0.35em] text-emerald-200/70">Balance</p>
-        <p className="mt-3 text-3xl font-semibold tracking-tight text-white">
-          {isLoading ? "Loading..." : `${formattedBalance} WOLO`}
-        </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.35em] text-emerald-200/70">
+              Balance
+            </p>
+            <p className="mt-3 text-3xl font-semibold tracking-tight text-white">
+              {isLoading ? "Loading..." : `${formattedBalance} WOLO`}
+            </p>
+          </div>
+
+        </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+        <p className="text-xs uppercase tracking-[0.35em] text-amber-200/70">
+          Start Here
+        </p>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <OnboardingStep
+            number="1"
+            title="Install Keplr"
+            body="Add the wallet extension and unlock it in your browser."
+            active={keplrMissing}
+          />
+          <OnboardingStep
+            number="2"
+            title="Connect Wallet"
+            body="Approve WoloChain when Keplr asks for permission."
+            active={!keplrMissing && !connected}
+          />
+          <OnboardingStep
+            number="3"
+            title="See Balance"
+            body="Your WoloChain address and WOLO balance confirm success."
+            active={connected}
+          />
+        </div>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-3">
         {WALLET_ACTIONS.map((action) => (
-          <button
+          <Link
             key={action.label}
-            type="button"
-            className={`w-full rounded-3xl px-5 py-5 text-left text-sm font-semibold text-white shadow-lg transition ${action.className}`}
+            href={action.href}
+            className={`rounded-3xl border px-5 py-5 transition ${action.className}`}
           >
-            {action.label}
-          </button>
+            <div className="text-sm font-semibold">{action.label}</div>
+            <p className="mt-2 text-sm leading-6 text-slate-300">{action.description}</p>
+          </Link>
         ))}
       </section>
+    </div>
+  );
+}
+
+function OnboardingStep({
+  number,
+  title,
+  body,
+  active,
+}: {
+  number: string;
+  title: string;
+  body: string;
+  active: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-2xl border p-4 ${
+        active
+          ? "border-amber-300/30 bg-amber-300/10"
+          : "border-white/10 bg-white/[0.035]"
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <div
+          className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
+            active ? "bg-amber-300 text-slate-950" : "bg-white/10 text-white"
+          }`}
+        >
+          {number}
+        </div>
+        <div className="font-semibold text-white">{title}</div>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-slate-300">{body}</p>
     </div>
   );
 }

@@ -9,12 +9,6 @@ import ScheduledMatchCard, {
 } from "@/components/challenge/ScheduledMatchCard";
 import { displayName } from "@/components/lobby/utils";
 import { useUserAuth } from "@/context/UserAuthContext";
-import {
-  displayParseReason,
-  outcomeBadgeLabel,
-  replayParticipantsLabel,
-  winnerLabel,
-} from "@/lib/gameStatsView";
 import type { LiveGamesSnapshot } from "@/lib/liveGames";
 import { getTournamentMatchStatusLabel } from "@/lib/lobby";
 
@@ -24,10 +18,18 @@ type LiveGamesBoardProps = {
 
 const LIVE_GAMES_POLL_INTERVAL_MS = 5_000;
 
-function formatTime(value: string | null) {
+function formatStableIso(value: string | null) {
   if (!value) return "Now";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Now";
+  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+function formatTime(value: string | null, mounted: boolean) {
+  if (!value) return "Now";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Now";
+  if (!mounted) return formatStableIso(value);
   return date.toLocaleString([], {
     month: "short",
     day: "numeric",
@@ -36,10 +38,11 @@ function formatTime(value: string | null) {
   });
 }
 
-function formatUpdatedTime(value: string | null) {
+function formatUpdatedTime(value: string | null, mounted: boolean) {
   if (!value) return "Now";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Now";
+  if (!mounted) return formatStableIso(value);
   return date.toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
@@ -76,6 +79,7 @@ function playerLabel(
 export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps) {
   const { uid } = useUserAuth();
   const [snapshot, setSnapshot] = useState(initialSnapshot);
+  const [mounted, setMounted] = useState(false);
   const [actionState, setActionState] = useState<ScheduledMatchCardActionState>({
     challengeId: null,
     kind: null,
@@ -112,6 +116,7 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
   }, []);
 
   useEffect(() => {
+    setMounted(true);
     void refresh();
 
     const interval = window.setInterval(() => {
@@ -136,36 +141,62 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
   const recentScheduledMatches = useMemo(
     () =>
       snapshot.scheduledMatches.filter((match) =>
-        ["completed", "forfeited"].includes(match.displayState)
+        [
+          "completed",
+          "forfeited",
+          "no_show_left",
+          "no_show_right",
+          "double_no_show",
+          "refunded",
+        ].includes(match.displayState)
       ),
     [snapshot.scheduledMatches]
   );
   const acceptedScheduledMatches = useMemo(
-    () => snapshot.scheduledMatches.filter((match) => match.displayState === "accepted"),
+    () =>
+      snapshot.scheduledMatches.filter((match) =>
+        [
+          "accepted",
+          "terms_accepted",
+          "creator_funded",
+          "opponent_funded",
+          "funded",
+          "checkin_open",
+          "left_checked_in",
+          "right_checked_in",
+          "ready",
+        ].includes(match.displayState)
+      ),
     [snapshot.scheduledMatches]
   );
   const pendingScheduledMatches = useMemo(
-    () => snapshot.scheduledMatches.filter((match) => match.displayState === "pending"),
+    () =>
+      snapshot.scheduledMatches.filter((match) =>
+        ["proposed", "pending"].includes(match.displayState)
+      ),
     [snapshot.scheduledMatches]
   );
   const liveItemsCount =
-    liveScheduledMatches.length +
-    snapshot.activeSessions.length +
-    snapshot.liveMatches.length +
-    recentScheduledMatches.length +
-    snapshot.recentlyCompletedSessions.length;
-  const sectionStatusLabel =
-    snapshot.liveCount > 0
-      ? `${snapshot.liveCount} live`
-      : recentScheduledMatches.length + snapshot.recentlyCompletedSessions.length > 0
-        ? `${recentScheduledMatches.length + snapshot.recentlyCompletedSessions.length} recent`
-        : "0 live";
+    liveScheduledMatches.length + snapshot.activeSessions.length + snapshot.liveMatches.length;
+  const recentOutcomeCount = recentScheduledMatches.length + snapshot.recentlyCompletedSessions.length;
+  const sectionStatusLabel = snapshot.liveCount > 0 ? `${snapshot.liveCount} live` : "0 live";
 
   const onDeckCount =
     snapshot.readyMatches.length + acceptedScheduledMatches.length + pendingScheduledMatches.length;
 
   const updateChallenge = useCallback(
-    async (challengeId: number, action: ScheduledMatchCardActionKind) => {
+    async (
+      challengeId: number,
+      action: ScheduledMatchCardActionKind,
+      extra?: {
+        fundingTxHash?: string;
+        fundingWalletAddress?: string;
+        scheduledAt?: string;
+        challengeNote?: string;
+        wagerAmountWolo?: number;
+        guaranteeAmountWolo?: number;
+      }
+    ) => {
       setActionState({
         challengeId,
         kind: action,
@@ -177,12 +208,13 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
         const response = await fetch(`/api/challenges/${challengeId}`, {
           method: "PATCH",
           headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            action,
-          }),
-        });
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action,
+          ...extra,
+        }),
+      });
 
         const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
         if (!response.ok) {
@@ -200,6 +232,7 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
       } catch (error) {
         const message = error instanceof Error ? error.message : "Challenge could not be updated.";
         setBoardError(message);
+        throw new Error(message);
       } finally {
         setActionState({
           challengeId: null,
@@ -227,7 +260,7 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
               {snapshot.readyCount} ready
             </div>
             <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
-              {formatUpdatedTime(snapshot.updatedAt)}
+              {formatUpdatedTime(snapshot.updatedAt, mounted)}
             </div>
             <Link
               href="/challenge"
@@ -257,8 +290,8 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
         ) : null}
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <section className="rounded-[1.8rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6">
+      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+        <section className="min-w-0 rounded-[1.8rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="text-xs uppercase tracking-[0.35em] text-red-200/70">Now Playing</div>
@@ -281,38 +314,28 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
                     key={`scheduled-live-${match.id}`}
                     match={match}
                     viewerUid={uid}
+                    defaultViewMode="detail"
                     onAccept={(challengeId) => updateChallenge(challengeId, "accept")}
                     onDecline={(challengeId) => updateChallenge(challengeId, "decline")}
                     onCancel={(challengeId) => updateChallenge(challengeId, "cancel")}
+                    onReschedule={(challengeId, payload) => updateChallenge(challengeId, "reschedule", payload)}
+                    onFund={(challengeId, payload) => updateChallenge(challengeId, "fund", payload)}
+                    onCheckIn={(challengeId) => updateChallenge(challengeId, "check_in")}
                     actionState={actionState}
                   />
                 ))}
                 {snapshot.activeSessions.map((session) => (
-                  <LiveSessionCard key={`session-${session.id}`} session={session} />
+                  <LiveSessionCard key={`session-${session.id}`} session={session} mounted={mounted} />
                 ))}
                 {snapshot.liveMatches.map((match) => (
-                  <TournamentLiveMatchCard key={`match-${match.id}`} match={match} emphasis="live" />
-                ))}
-                {recentScheduledMatches.map((match) => (
-                  <ScheduledMatchCard
-                    key={`scheduled-recent-${match.id}`}
-                    match={match}
-                    viewerUid={uid}
-                    onAccept={(challengeId) => updateChallenge(challengeId, "accept")}
-                    onDecline={(challengeId) => updateChallenge(challengeId, "decline")}
-                    onCancel={(challengeId) => updateChallenge(challengeId, "cancel")}
-                    actionState={actionState}
-                  />
-                ))}
-                {snapshot.recentlyCompletedSessions.map((session) => (
-                  <LiveSessionCard key={`completed-${session.id}`} session={session} />
+                  <TournamentLiveMatchCard key={`match-${match.id}`} match={match} emphasis="live" mounted={mounted} />
                 ))}
               </>
             )}
           </div>
         </section>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <section className="rounded-[1.8rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
@@ -332,7 +355,7 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
               ) : (
                 <>
                   {snapshot.readyMatches.map((match) => (
-                    <TournamentLiveMatchCard key={`ready-${match.id}`} match={match} emphasis="ready" compact />
+                    <TournamentLiveMatchCard key={`ready-${match.id}`} match={match} emphasis="ready" compact mounted={mounted} />
                   ))}
                   {acceptedScheduledMatches.map((match) => (
                     <ScheduledMatchCard
@@ -342,8 +365,12 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
                       onAccept={(challengeId) => updateChallenge(challengeId, "accept")}
                       onDecline={(challengeId) => updateChallenge(challengeId, "decline")}
                       onCancel={(challengeId) => updateChallenge(challengeId, "cancel")}
+                      onReschedule={(challengeId, payload) => updateChallenge(challengeId, "reschedule", payload)}
+                      onFund={(challengeId, payload) => updateChallenge(challengeId, "fund", payload)}
+                      onCheckIn={(challengeId) => updateChallenge(challengeId, "check_in")}
                       actionState={actionState}
                       compact
+                      defaultViewMode="summary"
                     />
                   ))}
                   {pendingScheduledMatches.map((match) => (
@@ -354,9 +381,55 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
                       onAccept={(challengeId) => updateChallenge(challengeId, "accept")}
                       onDecline={(challengeId) => updateChallenge(challengeId, "decline")}
                       onCancel={(challengeId) => updateChallenge(challengeId, "cancel")}
+                      onReschedule={(challengeId, payload) => updateChallenge(challengeId, "reschedule", payload)}
+                      onFund={(challengeId, payload) => updateChallenge(challengeId, "fund", payload)}
+                      onCheckIn={(challengeId) => updateChallenge(challengeId, "check_in")}
                       actionState={actionState}
                       compact
+                      defaultViewMode="summary"
                     />
+                  ))}
+                </>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-[1.8rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <div className="text-xs uppercase tracking-[0.35em] text-emerald-200/70">Resolved</div>
+                <h2 className="mt-2 text-2xl font-semibold text-white">Recent outcomes</h2>
+              </div>
+              <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200">
+                {recentOutcomeCount} resolved
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {recentOutcomeCount === 0 ? (
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-5 text-sm text-slate-300">
+                  No resolved live outcomes yet.
+                </div>
+              ) : (
+                <>
+                  {recentScheduledMatches.map((match) => (
+                    <ScheduledMatchCard
+                      key={`scheduled-recent-${match.id}`}
+                      match={match}
+                      viewerUid={uid}
+                      onAccept={(challengeId) => updateChallenge(challengeId, "accept")}
+                      onDecline={(challengeId) => updateChallenge(challengeId, "decline")}
+                      onCancel={(challengeId) => updateChallenge(challengeId, "cancel")}
+                      onReschedule={(challengeId, payload) => updateChallenge(challengeId, "reschedule", payload)}
+                      onFund={(challengeId, payload) => updateChallenge(challengeId, "fund", payload)}
+                      onCheckIn={(challengeId) => updateChallenge(challengeId, "check_in")}
+                      actionState={actionState}
+                      compact
+                      defaultViewMode="summary"
+                    />
+                  ))}
+                  {snapshot.recentlyCompletedSessions.map((session) => (
+                    <LiveSessionCard key={`completed-${session.id}`} session={session} mounted={mounted} />
                   ))}
                 </>
               )}
@@ -380,46 +453,33 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
                   Waiting on the next completed match.
                 </div>
               ) : (
-                snapshot.recentMatches.slice(0, 4).map((match) => {
-                  const outcomeLabel = outcomeBadgeLabel(match.parse_reason, match.winner);
-
-                  return (
-                    <Link
-                      key={match.id}
-                      href={`/game-stats/${match.id}`}
-                      className="block rounded-2xl border border-white/10 bg-white/5 px-4 py-4 transition hover:border-white/20 hover:bg-white/7"
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold text-white">
-                            {replayParticipantsLabel(match.players, match.parse_reason, match.key_events)}
-                          </div>
-                          <div className="mt-1 text-sm text-slate-300">
-                            {typeof match.map === "string"
-                              ? match.map
-                              : match.map && typeof match.map === "object" && "name" in match.map
-                                ? String(match.map.name || "Unknown map")
-                                : "Unknown map"}
-                          </div>
-                          <div className="mt-3 flex flex-wrap gap-2 text-[11px] uppercase text-slate-400">
-                            <span className="rounded-full border border-white/10 px-2.5 py-1">
-                              {displayParseReason(match.parse_reason)}
-                            </span>
-                            {outcomeLabel ? (
-                              <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2.5 py-1 text-amber-100">
-                                {outcomeLabel}
-                              </span>
-                            ) : null}
-                          </div>
+                snapshot.recentMatches.slice(0, 4).map((match) => (
+                  <Link
+                    key={match.id}
+                    href={`/game-stats/${match.id}`}
+                    className="block rounded-2xl border border-white/10 bg-white/5 px-4 py-4 transition hover:border-white/20 hover:bg-white/7"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-white">
+                          {Array.isArray(match.players)
+                            ? match.players.map((player) => player.name).filter(Boolean).join(" vs ")
+                            : "Replay-backed result"}
                         </div>
-                        <div className="text-right text-xs text-slate-400">
-                          <div>{winnerLabel(match.winner, match.parse_reason)}</div>
-                          <div className="mt-1">{formatTime(match.played_on || match.timestamp)}</div>
+                        <div className="mt-1 text-sm text-slate-300">
+                          {typeof match.map === "string"
+                            ? match.map
+                            : match.map && typeof match.map === "object" && "name" in match.map
+                              ? String(match.map.name || "Unknown map")
+                              : "Unknown map"}
                         </div>
                       </div>
-                    </Link>
-                  );
-                })
+                      <div className="text-right text-xs text-slate-400">
+                        {formatTime(match.played_on || match.timestamp, mounted)}
+                      </div>
+                    </div>
+                  </Link>
+                ))
               )}
             </div>
           </section>
@@ -431,8 +491,10 @@ export default function LiveGamesBoard({ initialSnapshot }: LiveGamesBoardProps)
 
 function LiveSessionCard({
   session,
+  mounted,
 }: {
   session: LiveGamesSnapshot["activeSessions"][number];
+  mounted: boolean;
 }) {
   const isCompleted = session.state === "completed";
   const gameHref = `/game-stats/live/${encodeURIComponent(session.sessionKey)}`;
@@ -467,7 +529,7 @@ function LiveSessionCard({
               Parse #{session.parseIteration}
             </span>
             <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
-              Updated {formatUpdatedTime(session.completedAt || session.updatedAt)}
+              Updated {formatUpdatedTime(session.completedAt || session.updatedAt, mounted)}
             </span>
             {session.uploader ? (
               <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
@@ -519,10 +581,12 @@ function LiveSessionCard({
 function TournamentLiveMatchCard({
   match,
   emphasis,
+  mounted,
   compact = false,
 }: {
   match: LiveGamesSnapshot["liveMatches"][number];
   emphasis: "live" | "ready";
+  mounted: boolean;
   compact?: boolean;
 }) {
   const accentClass =
@@ -542,7 +606,7 @@ function TournamentLiveMatchCard({
             {playerLabel(match.playerOne)} vs {playerLabel(match.playerTwo)}
           </div>
           <div className="mt-2 text-sm text-slate-300">
-            {match.proof?.mapName || "Map lock incoming"} · {formatTime(match.proof?.playedOn || match.scheduledAt)}
+            {match.proof?.mapName || "Map lock incoming"} · {formatTime(match.proof?.playedOn || match.scheduledAt, mounted)}
           </div>
         </div>
 

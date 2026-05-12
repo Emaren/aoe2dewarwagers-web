@@ -1,5 +1,6 @@
 "use client";
 
+import { formatLobbyMoment } from "@/components/lobby/utils";
 import {
   type CSSProperties,
   type MouseEvent,
@@ -197,13 +198,13 @@ export function LobbyChat(props: LobbyChatProps) {
                       <path
                         d="M10 2.75v5.5"
                         stroke="currentColor"
-                        strokeWidth="1.8"
+                        strokeWidth="1.44"
                         strokeLinecap="round"
                       />
                       <path
                         d="M6.35 5.2a6 6 0 1 0 7.3 0"
                         stroke="currentColor"
-                        strokeWidth="1.8"
+                        strokeWidth="1.44"
                         strokeLinecap="round"
                       />
                     </svg>
@@ -470,10 +471,7 @@ function LobbyMessageCard({
         </div>
 
         <div className="text-xs text-slate-400">
-          {new Date(item.message.createdAt).toLocaleTimeString([], {
-            hour: "numeric",
-            minute: "2-digit",
-          })}
+          {formatLobbyMoment(item.message.createdAt)}
         </div>
       </div>
 

@@ -6,6 +6,8 @@ import type {
   SettlementRailRow,
   SettlementRailSummary,
 } from "@/components/admin/WoloSettlementRail";
+import type { ScheduledMatchColorTag } from "@/lib/scheduledMatchPreferences";
+import type { TileViewMode, TileViewPreferences } from "@/lib/tileViewPreferences";
 
 export type FounderBonusType = "participants" | "winner";
 
@@ -50,7 +52,9 @@ export type Appearance = {
   viewMode: string;
   textColor: string;
   timeDisplayMode: string;
+  timeClockMode: string;
   timezoneOverride: string | null;
+  tileViewPreferences: TileViewPreferences;
   updatedAt: string | null;
 };
 
@@ -66,13 +70,30 @@ export type Activity = {
 export type ScheduledMatchSummary = {
   id: number;
   status: string;
+  displayState: string;
   role: "challenger" | "challenged";
   opponentName: string;
   opponentUid: string;
   scheduledAt: string;
   activityAt: string;
+  wagerAmountWolo: number;
+  guaranteeAmountWolo: number;
+  totalFundingWolo: number;
+  fundingState: string;
+  checkInState: string;
+  resolutionLabel: string | null;
   linkedMapName: string | null;
   linkedWinner: string | null;
+  personalFavorite: boolean;
+  personalBookmarked: boolean;
+  personalColorTag: ScheduledMatchColorTag | null;
+};
+
+export type ScheduledMatchPreferenceStats = {
+  favoriteCount: number;
+  bookmarkedCount: number;
+  colorTagCounts: Record<ScheduledMatchColorTag, number>;
+  latestUpdatedAt: string | null;
 };
 
 export type BetLedgerRow = {
@@ -134,6 +155,7 @@ export type AdminUserRow = {
   claimedWoloClaimAmount: number;
   rescindedWoloClaims: ClaimRow[];
   scheduledMatches: ScheduledMatchSummary[];
+  scheduledMatchPreferenceStats: ScheduledMatchPreferenceStats;
   betLedger: BetLedgerRow[];
   betStats: BetStats;
 };
@@ -151,6 +173,21 @@ export type AdminOverview = {
   totalActionEvents: number;
   themeBreakdown: Array<{ themeKey: string; count: number }>;
   viewBreakdown: Array<{ viewMode: string; count: number }>;
+  tileViewBreakdown: Array<{
+    tileKey: string;
+    label: string;
+    basicCount: number;
+    advancedCount: number;
+    basicPercent: number;
+    advancedPercent: number;
+    preferredMode: TileViewMode;
+  }>;
+  scheduledPreferenceUsage: {
+    favoriteCount: number;
+    bookmarkedCount: number;
+    usersWithPreferences: number;
+    colorTagCounts: Record<ScheduledMatchColorTag, number>;
+  };
 };
 
 export type WatcherDownloadSummaryRow = {
@@ -160,11 +197,21 @@ export type WatcherDownloadSummaryRow = {
   shortLabel: string;
   format: string;
   totalCount: number;
-  likelyExternalCount: number;
-  likelyInternalTestCount: number;
+  signedInCount: number;
+  guestCount: number;
+  likelyProbeCount: number;
   last24Hours: number;
   last7Days: number;
 };
+
+export type WatcherPackagePullClassification =
+  | "converted_to_match"
+  | "converted_to_app_open"
+  | "signed_in_package_pull"
+  | "guest_direct_pull"
+  | "likely_scraper_probe"
+  | "suspicious_platform_mismatch"
+  | "unknown_one_off_external_pull";
 
 export type WatcherDownloadRecentRow = {
   id: number;
@@ -178,16 +225,51 @@ export type WatcherDownloadRecentRow = {
   ipAddress: string | null;
   userAgent: string | null;
   referer: string | null;
-  trafficClass: "external" | "internal_test";
+  classification: WatcherPackagePullClassification;
+  classificationDetail: string;
   userUid: string | null;
   userDisplayName: string | null;
 };
 
+export type WatcherMetricWindow = {
+  allTime: number;
+  last24Hours: number;
+  last7Days: number;
+};
+
 export type WatcherDownloadsPayload = {
+  packagePulls: WatcherMetricWindow & {
+    signedIn: number;
+    guest: number;
+    likelyProbe: number;
+  };
+  confirmedWatcherUsers: {
+    fromClientEvents: number;
+    fromWatcherSubmittedGames: number;
+    totalKnown: number;
+    detail: string;
+  };
+  watcherAppOpens: WatcherMetricWindow;
+  linkedWatcherOpens: WatcherMetricWindow;
+  uploadEvents: {
+    attempted: WatcherMetricWindow;
+    succeeded: WatcherMetricWindow;
+    failed: WatcherMetricWindow;
+  };
+  parsedMatches: {
+    watcher: WatcherMetricWindow;
+    fileUpload: WatcherMetricWindow;
+    bySource: Array<{
+      parseSource: string;
+      count: number;
+    }>;
+  };
+  manualUploadUsers: number;
   summary: {
     totalCount: number;
-    likelyExternalCount: number;
-    likelyInternalTestCount: number;
+    signedInCount: number;
+    guestCount: number;
+    likelyProbeCount: number;
     last24Hours: number;
     last7Days: number;
     rows: WatcherDownloadSummaryRow[];

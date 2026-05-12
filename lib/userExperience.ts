@@ -12,11 +12,18 @@ import {
   type LobbyViewMode,
 } from "@/components/lobby/lobbyPresentation";
 import {
+  DEFAULT_TIME_CLOCK_MODE,
   DEFAULT_TIME_DISPLAY_MODE,
+  isTimeClockMode,
   isTimeDisplayMode,
   normalizeTimezoneOverride,
+  type TimeClockMode,
   type TimeDisplayMode,
 } from "@/lib/timeDisplay";
+import {
+  normalizeTileViewPreferences,
+  type TileViewPreferences,
+} from "@/lib/tileViewPreferences";
 
 export type StoredAppearancePreference = {
   themeKey: LobbyThemeKey;
@@ -24,7 +31,9 @@ export type StoredAppearancePreference = {
   viewMode: LobbyViewMode;
   textColor: LobbyTextColor;
   timeDisplayMode: TimeDisplayMode;
+  timeClockMode: TimeClockMode;
   timezoneOverride: string | null;
+  tileViewPreferences: TileViewPreferences;
   updatedAt: string | null;
 };
 
@@ -59,14 +68,18 @@ export function normalizeAppearancePreference(input: {
   viewMode?: string | null;
   textColor?: string | null;
   timeDisplayMode?: string | null;
+  timeClockMode?: string | null;
   timezoneOverride?: string | null;
+  tileViewPreferences?: unknown;
 }) {
   const rawThemeKey = input.themeKey ?? null;
   const rawTileThemeKey = input.tileThemeKey ?? null;
   const rawViewMode = input.viewMode ?? null;
   const rawTextColor = input.textColor ?? null;
   const rawTimeDisplayMode = input.timeDisplayMode ?? null;
+  const rawTimeClockMode = input.timeClockMode ?? null;
   const rawTimezoneOverride = input.timezoneOverride ?? null;
+  const rawTileViewPreferences = input.tileViewPreferences ?? null;
   const themeKey: LobbyThemeKey = isLobbyThemeKey(rawThemeKey)
     ? rawThemeKey
     : DEFAULT_LOBBY_THEME;
@@ -82,7 +95,11 @@ export function normalizeAppearancePreference(input: {
   const timeDisplayMode: TimeDisplayMode = isTimeDisplayMode(rawTimeDisplayMode)
     ? rawTimeDisplayMode
     : DEFAULT_TIME_DISPLAY_MODE;
+  const timeClockMode: TimeClockMode = isTimeClockMode(rawTimeClockMode)
+    ? rawTimeClockMode
+    : DEFAULT_TIME_CLOCK_MODE;
   const timezoneOverride = normalizeTimezoneOverride(rawTimezoneOverride);
+  const tileViewPreferences = normalizeTileViewPreferences(rawTileViewPreferences);
 
   return {
     themeKey,
@@ -90,14 +107,18 @@ export function normalizeAppearancePreference(input: {
     viewMode,
     textColor,
     timeDisplayMode,
+    timeClockMode,
     timezoneOverride,
+    tileViewPreferences,
   } satisfies {
     themeKey: LobbyThemeKey;
     tileThemeKey: LobbyThemeKey;
     viewMode: LobbyViewMode;
     textColor: LobbyTextColor;
     timeDisplayMode: TimeDisplayMode;
+    timeClockMode: TimeClockMode;
     timezoneOverride: string | null;
+    tileViewPreferences: TileViewPreferences;
   };
 }
 
@@ -113,7 +134,9 @@ export async function loadAppearancePreferenceForUser(
       viewMode: true,
       textColor: true,
       timeDisplayMode: true,
+      timeClockMode: true,
       timezoneOverride: true,
+      tileViewPreferences: true,
       updatedAt: true,
     },
   });
@@ -124,7 +147,9 @@ export async function loadAppearancePreferenceForUser(
     viewMode: preference?.viewMode ?? null,
     textColor: preference?.textColor ?? null,
     timeDisplayMode: preference?.timeDisplayMode ?? null,
+    timeClockMode: preference?.timeClockMode ?? null,
     timezoneOverride: preference?.timezoneOverride ?? null,
+    tileViewPreferences: preference?.tileViewPreferences ?? null,
   });
 
   return {
@@ -153,7 +178,9 @@ export async function loadAppearancePreferenceMap(
       viewMode: true,
       textColor: true,
       timeDisplayMode: true,
+      timeClockMode: true,
       timezoneOverride: true,
+      tileViewPreferences: true,
       updatedAt: true,
     },
   });
@@ -165,7 +192,9 @@ export async function loadAppearancePreferenceMap(
       viewMode: DEFAULT_LOBBY_VIEW,
       textColor: DEFAULT_LOBBY_TEXT_COLOR,
       timeDisplayMode: DEFAULT_TIME_DISPLAY_MODE,
+      timeClockMode: DEFAULT_TIME_CLOCK_MODE,
       timezoneOverride: null,
+      tileViewPreferences: {},
       updatedAt: null,
     });
   }
@@ -190,17 +219,23 @@ export async function upsertAppearancePreference(
     viewMode?: string | null;
     textColor?: string | null;
     timeDisplayMode?: string | null;
+    timeClockMode?: string | null;
     timezoneOverride?: string | null;
+    tileViewPreferences?: unknown;
   }
 ) {
   const normalized = normalizeAppearancePreference(input);
+  const data = {
+    ...normalized,
+    tileViewPreferences: normalized.tileViewPreferences as Prisma.InputJsonValue,
+  };
 
   return prisma.userAppearancePreference.upsert({
     where: { userId },
-    update: normalized,
+    update: data,
     create: {
       userId,
-      ...normalized,
+      ...data,
     },
   });
 }

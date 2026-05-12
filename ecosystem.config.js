@@ -1,14 +1,14 @@
-// /var/www/app-prodn/ecosystem.config.js
+// /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn/ecosystem.config.js
 module.exports = {
   apps: [
     {
       /* ──────────────── process meta ──────────────── */
-      name : 'app-prodn',
-      cwd  : '/var/www/app-prodn',
+      name : 'aoe2dewarwagers-web',
+      cwd  : '/mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn',
 
       // Run the server produced by `next build`
       script : 'node_modules/.bin/next',
-      args   : 'start -H 127.0.0.1 -p 3004',
+      args   : 'start -H 127.0.0.1 -p 4000',
 
       /* ──────────────── environment ──────────────── */
       env: {
@@ -16,7 +16,7 @@ module.exports = {
 
         /* Keep browser API calls same-origin; proxy server-side to api-prodn */
         NEXT_PUBLIC_API_BASE_URL: '.',
-        AOE2_BACKEND_UPSTREAM : 'http://127.0.0.1:3330',
+        AOE2_BACKEND_UPSTREAM : 'http://127.0.0.1:4400',
         NEXT_PUBLIC_CHAIN_ID    : '11865'
       },
 

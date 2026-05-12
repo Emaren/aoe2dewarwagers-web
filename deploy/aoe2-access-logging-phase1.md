@@ -2,7 +2,7 @@
 
 ## Scope
 
-Phase 1 owns raw nginx request logging for `aoe2hdbets.com` only.
+Phase 1 owns raw nginx request logging for `aoe2dewarwagers.com` only.
 
 - nginx emits raw AoE2 request logs
 - logrotate owns file rotation
@@ -17,7 +17,7 @@ Live inspection on `hel1` showed:
 
 - `/etc/nginx/nginx.conf` already defines the house JSON format: `traffic_master`
 - `/etc/nginx/nginx.conf` already writes a shared catch-all log: `/var/log/nginx/access.log`
-- `/etc/nginx/sites-available/aoe2hdbets.com` does **not** define a dedicated AoE2 access log
+- `/etc/nginx/sites-available/aoe2dewarwagers.com` does **not** define a dedicated AoE2 access log
 - the only `access_log off` lines in that vhost are the deny-list locations for dotfiles and secret-like extensions
 - `/etc/logrotate.d/nginx` currently rotates `/var/log/nginx/*.log` daily
 
@@ -30,9 +30,9 @@ So the real gap is not "AoE2 is fully unlogged." The real gap is:
 
 These production files live outside the repo:
 
-1. `/etc/nginx/sites-available/aoe2hdbets.com`
+1. `/etc/nginx/sites-available/aoe2dewarwagers.com`
 2. `/etc/logrotate.d/nginx`
-3. `/etc/logrotate.d/00-aoe2hdbets-nginx`
+3. `/etc/logrotate.d/00-aoe2dewarwagers-nginx`
 
 This repo cannot honestly claim those files were changed unless the operator has sudo on `hel1`.
 
@@ -40,12 +40,12 @@ This repo cannot honestly claim those files were changed unless the operator has
 
 ### 1) Add a dedicated AoE2 access log to the live vhost
 
-Edit `/etc/nginx/sites-available/aoe2hdbets.com`.
+Edit `/etc/nginx/sites-available/aoe2dewarwagers.com`.
 
 Add this near the top of **both** the `443` and `80` server blocks:
 
 ```nginx
-access_log /var/log/nginx/aoe2hdbets.access.log traffic_master;
+access_log /var/log/nginx/aoe2dewarwagers.access.log traffic_master;
 ```
 
 Keep these existing location-level lines as-is:
@@ -60,8 +60,8 @@ The live vhost should end up following this pattern:
 
 ```nginx
 server {
-    server_name aoe2hdbets.com www.aoe2hdbets.com;
-    access_log /var/log/nginx/aoe2hdbets.access.log traffic_master;
+    server_name aoe2dewarwagers.com www.aoe2dewarwagers.com;
+    access_log /var/log/nginx/aoe2dewarwagers.access.log traffic_master;
 
     location /.well-known/acme-challenge/ { root /var/www/html; }
 
@@ -81,10 +81,10 @@ server {
 }
 
 server {
-    server_name aoe2hdbets.com www.aoe2hdbets.com;
+    server_name aoe2dewarwagers.com www.aoe2dewarwagers.com;
     listen 80;
     listen [::]:80;
-    access_log /var/log/nginx/aoe2hdbets.access.log traffic_master;
+    access_log /var/log/nginx/aoe2dewarwagers.access.log traffic_master;
 
     location /.well-known/acme-challenge/ { root /var/www/html; }
 
@@ -110,7 +110,7 @@ server {
 Because `/etc/logrotate.d/nginx` already rotates `/var/log/nginx/*.log`, a new dedicated file at:
 
 ```text
-/var/log/nginx/aoe2hdbets.access.log
+/var/log/nginx/aoe2dewarwagers.access.log
 ```
 
 would otherwise overlap the wildcard rule.
@@ -149,10 +149,10 @@ The relevant block should look like:
 
 ### 3) Add the dedicated AoE2 size-based logrotate rule
 
-Create `/etc/logrotate.d/00-aoe2hdbets-nginx` with:
+Create `/etc/logrotate.d/00-aoe2dewarwagers-nginx` with:
 
 ```conf
-/var/log/nginx/aoe2hdbets.access.log {
+/var/log/nginx/aoe2dewarwagers.access.log {
 	size 100M
 	rotate 7
 	missingok
@@ -178,16 +178,16 @@ Suggested backup-first flow:
 
 ```bash
 ssh hel1
-sudo cp /etc/nginx/sites-available/aoe2hdbets.com /etc/nginx/sites-available/aoe2hdbets.com.bak.$(date +%Y%m%d-%H%M%S)
+sudo cp /etc/nginx/sites-available/aoe2dewarwagers.com /etc/nginx/sites-available/aoe2dewarwagers.com.bak.$(date +%Y%m%d-%H%M%S)
 sudo cp /etc/logrotate.d/nginx /etc/logrotate.d/nginx.bak.$(date +%Y%m%d-%H%M%S)
 ```
 
 Then edit:
 
 ```bash
-sudoedit /etc/nginx/sites-available/aoe2hdbets.com
+sudoedit /etc/nginx/sites-available/aoe2dewarwagers.com
 sudoedit /etc/logrotate.d/nginx
-sudoedit /etc/logrotate.d/00-aoe2hdbets-nginx
+sudoedit /etc/logrotate.d/00-aoe2dewarwagers-nginx
 ```
 
 ## Verification commands
@@ -207,25 +207,25 @@ sudo systemctl reload nginx
 Confirm the dedicated files exist:
 
 ```bash
-ls -lah /var/log/nginx/aoe2hdbets*
+ls -lah /var/log/nginx/aoe2dewarwagers*
 ```
 
 Dry-run logrotate and confirm the dedicated AoE2 file is recognized cleanly:
 
 ```bash
-sudo logrotate -d /etc/logrotate.conf 2>&1 | grep -n "aoe2hdbets.access.log\|duplicate"
+sudo logrotate -d /etc/logrotate.conf 2>&1 | grep -n "aoe2dewarwagers.access.log\|duplicate"
 ```
 
 Confirm live requests are landing in the dedicated AoE2 log:
 
 ```bash
-curl -sSI https://aoe2hdbets.com/lobby >/dev/null && sudo tail -n 5 /var/log/nginx/aoe2hdbets.access.log
+curl -sSI https://aoe2dewarwagers.com/lobby >/dev/null && sudo tail -n 5 /var/log/nginx/aoe2dewarwagers.access.log
 ```
 
 Optional sanity check that the dedicated AoE2 log is still using the JSON house format:
 
 ```bash
-sudo tail -n 1 /var/log/nginx/aoe2hdbets.access.log | jq .
+sudo tail -n 1 /var/log/nginx/aoe2dewarwagers.access.log | jq .
 ```
 
 ## Phase 2 handoff to Traffic
@@ -241,7 +241,7 @@ Useful facts from current Traffic code:
 
 So the later Traffic work should be one of:
 
-1. point a dedicated Traffic ingest path at `/var/log/nginx/aoe2hdbets.access.log`, or
+1. point a dedicated Traffic ingest path at `/var/log/nginx/aoe2dewarwagers.access.log`, or
 2. extend Traffic to tail multiple source logs or a configured directory of project logs
 
 In either case:

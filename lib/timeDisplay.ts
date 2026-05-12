@@ -1,16 +1,27 @@
-export const DEFAULT_TIME_DISPLAY_MODE = "utc" as const;
-export const TIME_DISPLAY_STORAGE_KEY = "AoE2DEWarWagers:time-display-mode";
-export const TIME_ZONE_STORAGE_KEY = "AoE2DEWarWagers:browser-time-zone";
+export const DEFAULT_TIME_DISPLAY_MODE = "local" as const;
+export const DEFAULT_TIME_CLOCK_MODE = "24h" as const;
+export const TIME_DISPLAY_STORAGE_KEY = "aoe2dewarwagers:time-display-mode";
+export const TIME_CLOCK_STORAGE_KEY = "aoe2dewarwagers:time-clock-mode";
+const TIME_DISPLAY_DEFAULT_VERSION = "browser-local-2026-04-27";
+const TIME_DISPLAY_DEFAULT_VERSION_KEY = "aoe2dewarwagers:time-display-default-version";
+export const TIME_ZONE_STORAGE_KEY = "aoe2dewarwagers:browser-time-zone";
 
 export const TIME_DISPLAY_MODES = [
   { id: "utc", label: "UTC" },
   { id: "local", label: "Local" },
 ] as const;
 
+export const TIME_CLOCK_MODES = [
+  { id: "24h", label: "24 hour" },
+  { id: "12h", label: "12 hour" },
+] as const;
+
 export type TimeDisplayMode = (typeof TIME_DISPLAY_MODES)[number]["id"];
+export type TimeClockMode = (typeof TIME_CLOCK_MODES)[number]["id"];
 
 export type TimeDisplayPreference = {
   timeDisplayMode?: TimeDisplayMode | null;
+  timeClockMode?: TimeClockMode | null;
   timezoneOverride?: string | null;
 };
 
@@ -38,6 +49,10 @@ export function isTimeDisplayMode(value: string | null | undefined): value is Ti
   return TIME_DISPLAY_MODES.some((option) => option.id === value);
 }
 
+export function isTimeClockMode(value: string | null | undefined): value is TimeClockMode {
+  return TIME_CLOCK_MODES.some((option) => option.id === value);
+}
+
 export function isValidIanaTimeZone(value: string | null | undefined) {
   if (!value || !value.trim()) {
     return false;
@@ -61,9 +76,13 @@ export function normalizeTimeDisplayPreference(input: TimeDisplayPreference) {
     timeDisplayMode: isTimeDisplayMode(input.timeDisplayMode)
       ? input.timeDisplayMode
       : DEFAULT_TIME_DISPLAY_MODE,
+    timeClockMode: isTimeClockMode(input.timeClockMode)
+      ? input.timeClockMode
+      : DEFAULT_TIME_CLOCK_MODE,
     timezoneOverride: normalizeTimezoneOverride(input.timezoneOverride),
   } satisfies {
     timeDisplayMode: TimeDisplayMode;
+    timeClockMode: TimeClockMode;
     timezoneOverride: string | null;
   };
 }
@@ -87,6 +106,16 @@ export function readStoredTimeDisplayMode() {
   }
 
   const value = window.localStorage.getItem(TIME_DISPLAY_STORAGE_KEY);
+  const migratedDefault =
+    window.localStorage.getItem(TIME_DISPLAY_DEFAULT_VERSION_KEY) === TIME_DISPLAY_DEFAULT_VERSION;
+  if (!migratedDefault) {
+    window.localStorage.setItem(TIME_DISPLAY_DEFAULT_VERSION_KEY, TIME_DISPLAY_DEFAULT_VERSION);
+    if (value === "utc") {
+      window.localStorage.setItem(TIME_DISPLAY_STORAGE_KEY, DEFAULT_TIME_DISPLAY_MODE);
+      return DEFAULT_TIME_DISPLAY_MODE;
+    }
+  }
+
   return isTimeDisplayMode(value) ? value : DEFAULT_TIME_DISPLAY_MODE;
 }
 
@@ -96,6 +125,23 @@ export function writeStoredTimeDisplayMode(value: TimeDisplayMode) {
   }
 
   window.localStorage.setItem(TIME_DISPLAY_STORAGE_KEY, value);
+}
+
+export function readStoredTimeClockMode() {
+  if (typeof window === "undefined") {
+    return DEFAULT_TIME_CLOCK_MODE;
+  }
+
+  const value = window.localStorage.getItem(TIME_CLOCK_STORAGE_KEY);
+  return isTimeClockMode(value) ? value : DEFAULT_TIME_CLOCK_MODE;
+}
+
+export function writeStoredTimeClockMode(value: TimeClockMode) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(TIME_CLOCK_STORAGE_KEY, value);
 }
 
 export function readStoredBrowserTimeZone() {
@@ -161,7 +207,12 @@ export function parseUtcDateTimeInputValue(value: string | null | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function buildFormatter(timeZone: string, options?: FormatDateTimeOptions) {
+function buildFormatter(
+  timeZone: string,
+  options?: FormatDateTimeOptions,
+  timeClockMode: TimeClockMode = DEFAULT_TIME_CLOCK_MODE
+) {
+  const useTwelveHourClock = timeClockMode === "12h";
   return new Intl.DateTimeFormat("en-US", {
     timeZone,
     month: "short",
@@ -169,8 +220,8 @@ function buildFormatter(timeZone: string, options?: FormatDateTimeOptions) {
     hour: "2-digit",
     minute: "2-digit",
     second: options?.includeSeconds ? "2-digit" : undefined,
-    hour12: false,
-    hourCycle: "h23",
+    hour12: useTwelveHourClock,
+    hourCycle: useTwelveHourClock ? undefined : "h23",
   });
 }
 
@@ -203,7 +254,8 @@ export function formatDateTime(
   }
 
   const timeZone = resolveTimeZone(preference, options?.browserTimeZone);
-  const formatted = buildFormatter(timeZone, options).format(parsed);
+  const normalized = normalizeTimeDisplayPreference(preference ?? {});
+  const formatted = buildFormatter(timeZone, options, normalized.timeClockMode).format(parsed);
 
   if (options?.includeZone === false) {
     return formatted;

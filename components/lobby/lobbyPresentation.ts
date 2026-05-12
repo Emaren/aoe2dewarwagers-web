@@ -10,10 +10,10 @@ export type LobbyThemeKey =
 export type LobbyViewMode = "steel" | "field";
 export type LobbyTextColor = "white" | "grey" | "black";
 
-export const LOBBY_THEME_STORAGE_KEY = "AoE2DEWarWagers:lobby-theme";
-export const LOBBY_TILE_THEME_STORAGE_KEY = "AoE2DEWarWagers:lobby-tile-theme";
-export const LOBBY_VIEW_STORAGE_KEY = "AoE2DEWarWagers:lobby-view";
-export const LOBBY_TEXT_COLOR_STORAGE_KEY = "AoE2DEWarWagers:lobby-text-color";
+export const LOBBY_THEME_STORAGE_KEY = "aoe2dewarwagers:lobby-theme";
+export const LOBBY_TILE_THEME_STORAGE_KEY = "aoe2dewarwagers:lobby-tile-theme";
+export const LOBBY_VIEW_STORAGE_KEY = "aoe2dewarwagers:lobby-view";
+export const LOBBY_TEXT_COLOR_STORAGE_KEY = "aoe2dewarwagers:lobby-text-color";
 export const DEFAULT_LOBBY_THEME: LobbyThemeKey = "midnight";
 export const DEFAULT_LOBBY_TILE_THEME: LobbyThemeKey = "midnight";
 export const DEFAULT_LOBBY_VIEW: LobbyViewMode = "steel";

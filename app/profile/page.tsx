@@ -1,25 +1,43 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+  type UIEvent,
+} from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
+  ArrowDownLeft,
   ArrowRight,
+  ArrowUpRight,
+  Bell,
   Clock3,
   Coins,
   LogOut,
+  Mail,
+  Monitor,
   Palette,
+  Phone,
   ShieldCheck,
   Trophy,
   Upload,
 } from "lucide-react";
 
+import ScheduledMatchCard, {
+  CompactScheduledMatchHistoryRow,
+} from "@/components/challenge/ScheduledMatchCard";
 import {
   LobbyTextColorPicker,
   LobbyThemePicker,
   LobbyViewToggle,
 } from "@/components/lobby/LobbyAppearanceControls";
 import { useLobbyAppearance } from "@/components/lobby/LobbyAppearanceContext";
+import TimeClockModeToggle from "@/components/time/TimeClockModeToggle";
 import TimeDisplayModeToggle from "@/components/time/TimeDisplayModeToggle";
 import TimeDisplayText from "@/components/time/TimeDisplayText";
 import { getLobbyHeroBackground } from "@/components/lobby/lobbyPresentation";
@@ -34,6 +52,7 @@ type ProfileResponse = {
   inGameName: string | null;
   verified: boolean;
   isAdmin: boolean;
+  twitchStreamUrl: string | null;
   steamId: string | null;
   steamPersonaName: string | null;
   verificationLevel: number;
@@ -57,6 +76,24 @@ type ClaimWoloResponse = {
   pendingClaimLatestCreatedAt: string | null;
   detail?: string;
 };
+
+type WoloTransactionRow = {
+  id: string;
+  direction: "in" | "out";
+  amountWolo: number;
+  label: string;
+  status: string;
+  occurredAt: string;
+  txHash: string | null;
+};
+
+type WoloTransactionsResponse = {
+  rows?: WoloTransactionRow[];
+  nextOffset?: number;
+  hasMore?: boolean;
+};
+
+const MONEY_TX_PAGE_SIZE = 20;
 
 function buildWatcherPairUrl(apiKey: string) {
   return `aoe2de-watcher://pair?apiKey=${encodeURIComponent(apiKey)}`;
@@ -83,6 +120,13 @@ function ProfilePageContent() {
   const [challengeSnapshot, setChallengeSnapshot] = useState<ChallengeHubSnapshot | null>(null);
   const [watcherKeys, setWatcherKeys] = useState<WatcherKeyRow[]>([]);
   const [newWatcherKey, setNewWatcherKey] = useState<string | null>(null);
+  const [emailDraft, setEmailDraft] = useState("");
+  const [twitchDraft, setTwitchDraft] = useState("");
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [savingTwitch, setSavingTwitch] = useState(false);
+  const [moneyRows, setMoneyRows] = useState<WoloTransactionRow[]>([]);
+  const [moneyLoading, setMoneyLoading] = useState(false);
+  const [moneyHasMore, setMoneyHasMore] = useState(false);
   const [mintingWatcherKey, setMintingWatcherKey] = useState(false);
   const [watcherPairRequestStarted, setWatcherPairRequestStarted] = useState(false);
   const [claimingWolo, setClaimingWolo] = useState(false);
@@ -99,6 +143,8 @@ function ProfilePageContent() {
     setTextColor,
     timeDisplayMode,
     setTimeDisplayMode,
+    timeClockMode,
+    setTimeClockMode,
     browserTimeZone,
     presentationTone: appearanceTone,
   } = useLobbyAppearance();
@@ -128,6 +174,7 @@ function ProfilePageContent() {
       profile.pendingClaimLatestCreatedAt,
       {
         timeDisplayMode,
+        timeClockMode,
         timezoneOverride: browserTimeZone,
       },
       {
@@ -137,10 +184,14 @@ function ProfilePageContent() {
     return count > 1
       ? `${amount} WOLO waiting across ${count} claims · latest ${latest}`
       : `${amount} WOLO waiting · latest ${latest}`;
-  }, [browserTimeZone, hasPendingClaim, profile, timeDisplayMode]);
+  }, [browserTimeZone, hasPendingClaim, profile, timeClockMode, timeDisplayMode]);
 
   const recentChallengeHistory = useMemo(
     () => challengeSnapshot?.historyMatches.slice(0, 4) ?? [],
+    [challengeSnapshot]
+  );
+  const currentScheduledMatches = useMemo(
+    () => challengeSnapshot?.scheduledMatches.slice(0, 2) ?? [],
     [challengeSnapshot]
   );
 
@@ -158,10 +209,13 @@ function ProfilePageContent() {
 
   const loadProfile = useCallback(async () => {
     try {
-      const [profileResponse, watcherKeyResponse, challengeResponse] = await Promise.all([
+      const [profileResponse, watcherKeyResponse, challengeResponse, moneyResponse] = await Promise.all([
         fetch("/api/user/me", { cache: "no-store" }),
         fetch("/api/user/watcher-key", { cache: "no-store" }),
         fetch("/api/challenges", { cache: "no-store" }),
+        fetch(`/api/user/wolo-transactions?offset=0&limit=${MONEY_TX_PAGE_SIZE}`, {
+          cache: "no-store",
+        }),
       ]);
 
       if (profileResponse.ok) {
@@ -181,15 +235,67 @@ function ProfilePageContent() {
         const payload = (await challengeResponse.json()) as ChallengeHubSnapshot;
         setChallengeSnapshot(payload);
       }
+
+      if (moneyResponse.ok) {
+        const payload = (await moneyResponse.json()) as WoloTransactionsResponse;
+        setMoneyRows(Array.isArray(payload.rows) ? payload.rows : []);
+        setMoneyHasMore(Boolean(payload.hasMore));
+      }
     } catch (error) {
       console.warn("Failed to load profile:", error);
     }
   }, [setPlayerName]);
 
+  const loadMoreMoneyRows = useCallback(async () => {
+    if (moneyLoading || !moneyHasMore) return;
+
+    setMoneyLoading(true);
+    try {
+      const response = await fetch(
+        `/api/user/wolo-transactions?offset=${moneyRows.length}&limit=${MONEY_TX_PAGE_SIZE}`,
+        { cache: "no-store" }
+      );
+      if (!response.ok) {
+        throw new Error(`WOLO tx request failed: ${response.status}`);
+      }
+      const payload = (await response.json()) as WoloTransactionsResponse;
+      const nextRows = Array.isArray(payload.rows) ? payload.rows : [];
+      setMoneyRows((current) => {
+        const seen = new Set(current.map((row) => row.id));
+        return [...current, ...nextRows.filter((row) => !seen.has(row.id))];
+      });
+      setMoneyHasMore(Boolean(payload.hasMore));
+    } catch (error) {
+      console.warn("Failed to load more WOLO transactions:", error);
+    } finally {
+      setMoneyLoading(false);
+    }
+  }, [moneyHasMore, moneyLoading, moneyRows.length]);
+
   useEffect(() => {
     if (!isAuthenticated) return;
     void loadProfile();
   }, [isAuthenticated, loadProfile]);
+
+  const handleMoneyScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      const element = event.currentTarget;
+      const nearBottom =
+        element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+      if (nearBottom) {
+        void loadMoreMoneyRows();
+      }
+    },
+    [loadMoreMoneyRows]
+  );
+
+  useEffect(() => {
+    setEmailDraft(profile?.email ?? "");
+  }, [profile?.email]);
+
+  useEffect(() => {
+    setTwitchDraft(profile?.twitchStreamUrl ?? "");
+  }, [profile?.twitchStreamUrl]);
 
   useEffect(() => {
     if (!claimName || claimSeedApplied || profile?.inGameName) return;
@@ -231,13 +337,76 @@ function ProfilePageContent() {
           ? `Claimed ${payload.claimedAmountWolo} WOLO across ${payload.claimedCount} row${payload.claimedCount === 1 ? "" : "s"}.`
           : "No pending WOLO was waiting on this profile."
       );
+      void loadProfile();
     } catch (error) {
       console.error("Failed to claim WOLO:", error);
       setStatus(error instanceof Error ? error.message : "WOLO claim failed.");
     } finally {
       setClaimingWolo(false);
     }
-  }, []);
+  }, [loadProfile]);
+
+  const saveNotificationEmail = useCallback(async () => {
+    setSavingEmail(true);
+    setStatus("");
+
+    try {
+      const response = await fetch("/api/user/me", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email: emailDraft }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as
+        | (ProfileResponse & { detail?: string })
+        | null;
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.detail || "Email save failed.");
+      }
+
+      setProfile((current) => (current ? { ...current, email: payload.email } : current));
+      setStatus("Notification email saved.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Email save failed.");
+    } finally {
+      setSavingEmail(false);
+    }
+  }, [emailDraft]);
+
+  const saveTwitchStream = useCallback(async () => {
+    setSavingTwitch(true);
+    setStatus("");
+
+    try {
+      const response = await fetch("/api/user/me", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ twitchStreamUrl: twitchDraft }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as
+        | (ProfileResponse & { detail?: string })
+        | null;
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.detail || "Twitch stream save failed.");
+      }
+
+      setProfile((current) =>
+        current ? { ...current, twitchStreamUrl: payload.twitchStreamUrl } : current
+      );
+      setStatus(payload.twitchStreamUrl ? "Twitch stream saved." : "Twitch stream cleared.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Twitch stream save failed.");
+    } finally {
+      setSavingTwitch(false);
+    }
+  }, [twitchDraft]);
 
   const createWatcherKey = useCallback(
     async ({ pairToWatcher = false } = {}) => {
@@ -354,6 +523,46 @@ function ProfilePageContent() {
               />
             </div>
 
+            <div className="mt-4 rounded-[1.35rem] border border-white/10 bg-white/[0.035] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Monitor className="h-4 w-4 text-sky-100" aria-hidden="true" />
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.28em] text-slate-500">
+                      Broadcast
+                    </div>
+                    <div className="text-sm font-semibold text-white">Twitch player cam</div>
+                  </div>
+                </div>
+                {profile?.twitchStreamUrl ? (
+                  <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-100">
+                    Wired
+                  </span>
+                ) : (
+                  <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-300">
+                    Empty
+                  </span>
+                )}
+              </div>
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                <input
+                  type="url"
+                  value={twitchDraft}
+                  onChange={(event) => setTwitchDraft(event.target.value)}
+                  placeholder="https://www.twitch.tv/channel"
+                  className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-sky-300/45"
+                />
+                <button
+                  type="button"
+                  onClick={saveTwitchStream}
+                  disabled={savingTwitch}
+                  className="rounded-full bg-sky-200 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  {savingTwitch ? "Saving..." : "Save Stream"}
+                </button>
+              </div>
+            </div>
+
             {status ? (
               <div className="mt-4 rounded-2xl border border-sky-300/20 bg-sky-400/10 px-4 py-3 text-sm text-sky-100">
                 {status}
@@ -367,7 +576,7 @@ function ProfilePageContent() {
                     <Coins className="h-4 w-4" />
                     Claim $WOLO
                   </div>
-                  <div className="mt-3 text-4xl font-semibold tracking-[-0.04em] text-white">
+                  <div className="mt-3 text-4xl font-semibold tracking-normal text-white">
                     {profile?.pendingClaimAmountWolo ?? 0} WOLO
                   </div>
                   <div className="mt-2 max-w-2xl text-sm leading-6 text-emerald-50/88">
@@ -491,6 +700,89 @@ function ProfilePageContent() {
         </div>
       </section>
 
+      <section className="space-y-6">
+        <div className="rounded-[2rem] border border-white/10 bg-slate-950/70 p-6 sm:p-7">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.32em] text-emerald-100/70">
+                <Coins className="h-4 w-4" />
+                Money in / money out
+              </div>
+              <h2 className="mt-2 text-2xl font-semibold text-white">WOLO ledger</h2>
+            </div>
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300">
+              newest first
+            </span>
+          </div>
+
+          <div
+            className="mt-5 max-h-[21rem] space-y-2 overflow-y-auto pr-1"
+            onScroll={handleMoneyScroll}
+          >
+            {moneyRows.length === 0 ? (
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-sm text-slate-300">
+                No WOLO transaction rows yet.
+              </div>
+            ) : (
+              moneyRows.map((row) => (
+                <WoloTransactionLine key={row.id} row={row} />
+              ))
+            )}
+          </div>
+
+          {moneyHasMore ? (
+            <button
+              type="button"
+              onClick={() => void loadMoreMoneyRows()}
+              disabled={moneyLoading}
+              className="mt-4 rounded-full border border-white/15 px-4 py-2 text-sm text-white/85 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {moneyLoading ? "Loading..." : "Load More"}
+            </button>
+          ) : moneyRows.length > 0 ? (
+            <div className="mt-4 text-xs uppercase tracking-[0.22em] text-slate-500">
+              All visible rows loaded
+            </div>
+          ) : null}
+        </div>
+
+        <div className="rounded-[2rem] border border-white/10 bg-slate-950/70 p-6 sm:p-7">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="text-xs uppercase tracking-[0.35em] text-emerald-100/70">
+                Scheduled games
+              </div>
+              <h2 className="mt-2 text-2xl font-semibold text-white">Current locks</h2>
+            </div>
+            <Link
+              href="/challenge"
+              className="rounded-full border border-white/15 px-4 py-2 text-sm text-white/85 transition hover:border-white/30 hover:text-white"
+            >
+              Challenge Hub
+            </Link>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            {currentScheduledMatches.length === 0 ? (
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-sm text-slate-300">
+                No active scheduled games.
+              </div>
+            ) : (
+              currentScheduledMatches.map((match) => (
+                <ScheduledMatchCard
+                  key={`profile-current-${match.id}`}
+                  match={match}
+                  viewerUid={uid}
+                  serverNow={challengeSnapshot?.serverNow ?? null}
+                  compact
+                  defaultViewMode="summary"
+                />
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
       <section className="rounded-[2rem] border border-white/10 bg-slate-950/70 p-6 sm:p-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -524,29 +816,88 @@ function ProfilePageContent() {
               </div>
             ) : (
               recentChallengeHistory.map((match) => (
-                <div
+                <CompactScheduledMatchHistoryRow
                   key={match.id}
-                  className="rounded-2xl border border-white/10 bg-slate-950/45 px-4 py-4"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="break-words text-sm font-semibold text-white">
-                        {match.challenger.name} vs {match.challenged.name}
-                      </div>
-                      <div className="mt-1 text-[11px] uppercase tracking-[0.22em] text-slate-500">
-                        <TimeDisplayText value={match.activityAt} className="text-slate-400" />
-                      </div>
-                    </div>
-                    <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-300">
-                      {match.displayState}
-                    </div>
-                  </div>
-                  {match.challengeNote ? (
-                    <div className="mt-3 break-words text-sm leading-6 text-slate-300">{match.challengeNote}</div>
-                  ) : null}
-                </div>
+                  match={match}
+                  viewerUid={uid}
+                />
               ))
             )}
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-[2rem] border border-white/10 bg-slate-950/70 p-6 sm:p-7">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.32em] text-amber-100/70">
+          <Bell className="h-4 w-4" />
+          Notifications
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_0.8fr]">
+          <div className="grid gap-3">
+            <label className="block space-y-2">
+              <span className="flex items-center gap-2 text-sm text-slate-300">
+                <Mail className="h-4 w-4" />
+                Email
+              </span>
+              <input
+                type="email"
+                value={emailDraft}
+                onChange={(event) => setEmailDraft(event.target.value)}
+                className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-amber-300/50"
+                placeholder="you@example.com"
+              />
+            </label>
+
+            <label className="block space-y-2 opacity-60">
+              <span className="flex items-center gap-2 text-sm text-slate-300">
+                <Phone className="h-4 w-4" />
+                Phone later
+              </span>
+              <input
+                type="tel"
+                disabled
+                className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none"
+                placeholder="SMS not wired"
+              />
+            </label>
+          </div>
+
+          <div>
+            <div className="flex flex-wrap gap-2">
+              {["All", "Challenges", "Scheduled games", "Tournaments", "Wallet"].map((label) => (
+                <span
+                  key={label}
+                  className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-xs text-slate-200"
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {["10 min", "30 min", "1 hr"].map((label) => (
+                <span
+                  key={label}
+                  className={`rounded-full border px-3 py-1.5 text-xs ${
+                    label === "10 min" || label === "30 min"
+                      ? "border-emerald-300/25 bg-emerald-400/10 text-emerald-100"
+                      : "border-white/10 bg-white/[0.04] text-slate-300"
+                  }`}
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void saveNotificationEmail()}
+              disabled={savingEmail}
+              className="mt-5 rounded-full bg-amber-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingEmail ? "Saving..." : "Save Email"}
+            </button>
           </div>
         </div>
       </section>
@@ -606,6 +957,7 @@ function ProfilePageContent() {
           <CompactAppearanceCard title="Time" tone={appearanceTone}>
             <div className="mt-3 flex flex-col gap-3">
               <TimeDisplayModeToggle value={timeDisplayMode} onChange={setTimeDisplayMode} />
+              <TimeClockModeToggle value={timeClockMode} onChange={setTimeClockMode} />
               <div className="flex items-center gap-2 text-xs leading-5 text-slate-300">
                 <Clock3 className="h-4 w-4" />
                 Local uses the browser time zone{browserTimeZone ? ` (${browserTimeZone})` : ""}.
@@ -640,7 +992,7 @@ function ProfilePageContent() {
                   {textColor} text
                 </span>
                 <span className={`rounded-full border px-2.5 py-1 text-[11px] ${appearanceTone.neutralPill}`}>
-                  {timeDisplayMode}
+                  {timeDisplayMode} / {timeClockMode}
                 </span>
               </div>
             </div>
@@ -663,6 +1015,50 @@ function ProfilePageContent() {
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function WoloTransactionLine({ row }: { row: WoloTransactionRow }) {
+  const isIn = row.direction === "in";
+  const Icon = isIn ? ArrowDownLeft : ArrowUpRight;
+
+  return (
+    <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
+      <span
+        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
+          isIn
+            ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-100"
+            : "border-amber-300/20 bg-amber-400/10 text-amber-100"
+        }`}
+      >
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`shrink-0 font-semibold ${isIn ? "text-emerald-100" : "text-amber-100"}`}>
+            {isIn ? "+" : "-"}
+            {row.amountWolo.toLocaleString()} WOLO
+          </span>
+          <span className="min-w-0 truncate text-slate-200">{row.label}</span>
+        </div>
+        <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+          <TimeDisplayText
+            value={row.occurredAt}
+            includeZone={false}
+            className="text-slate-400"
+            bubbleClassName="w-max max-w-[18rem] text-center"
+          />
+          <span>·</span>
+          <span className="truncate">{row.status}</span>
+          {row.txHash ? (
+            <>
+              <span>·</span>
+              <span className="truncate font-mono">{row.txHash.slice(0, 10)}…</span>
+            </>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -692,7 +1088,7 @@ function CompactAppearanceCard({
 }: {
   title: string;
   tone: ReturnType<typeof useLobbyAppearance>["presentationTone"];
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div className={`rounded-2xl border p-5 ${tone.insetPanel}`}>

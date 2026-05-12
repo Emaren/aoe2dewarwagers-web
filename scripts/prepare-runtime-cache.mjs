@@ -10,9 +10,9 @@ try {
     console.error(
       [
         `Cannot prepare ${targetPath}.`,
-        "This is usually ownership drift inside /var/www/AoE2HDBets/app-prodn/.next.",
+        "This is usually ownership drift inside /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn/.next.",
         "Fix it before restart so Next image caching does not fail at runtime:",
-        "sudo chown -R tony:tony /var/www/AoE2HDBets/app-prodn/.next",
+        "sudo chown -R tony:tony /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn/.next",
       ].join("\n")
     );
     process.exit(1);

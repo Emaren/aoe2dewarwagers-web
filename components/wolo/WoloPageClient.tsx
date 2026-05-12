@@ -17,7 +17,7 @@ import { useWoloBalance } from "@/hooks/useWoloBalance";
 
 const KEPLR_DOWNLOAD_URL = "https://www.keplr.app/get";
 const HERO_VIEW_KEY = "wolo-hero-view";
-const PING_PUB_BASE_URL = "https://ping.pub";
+const WOLO_EXPLORER_BASE_URL = "https://explorer.testnet.aoe2dewarwagers.com";
 const OSMOSIS_DEX_URL = "https://app.osmosis.zone";
 const WOLO_EMBLEM_SRC = "/legacy/wolo-logo-transparent.png";
 const DEFAULT_WOLO_MARKET_PRICE = "$0.001";
@@ -41,11 +41,6 @@ const WoloChainTerminalTile = dynamic(
   }
 );
 
-function formatAddress(address?: string) {
-  if (!address) return "Not connected";
-  return `${address.slice(0, 12)}…${address.slice(-8)}`;
-}
-
 function formatTokenAmount(raw?: string) {
   const amount = Number(raw ?? "0");
   if (!Number.isFinite(amount)) return "0.00";
@@ -53,6 +48,26 @@ function formatTokenAmount(raw?: string) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+async function copyTextToClipboard(value: string) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
 }
 
 function shouldToggleFromTarget(target: EventTarget | null) {
@@ -64,7 +79,7 @@ function shouldToggleFromTarget(target: EventTarget | null) {
 
 function buildPingPubUrl(chainId: string) {
   const normalized = chainId.trim() || "wolo-testnet";
-  return `${PING_PUB_BASE_URL}/${normalized}`;
+  return `${WOLO_EXPLORER_BASE_URL}/${normalized}`;
 }
 
 function readStoredPremiumPreference(storageKey: string, fallback: boolean) {
@@ -81,14 +96,18 @@ export default function WoloPage() {
   const { data: rawBalance, isLoading: balanceLoading } = useWoloBalance(address);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [balanceOverride, setBalanceOverride] = useState<string | null>(null);
-  const [premiumHeroView, setPremiumHeroView] = useState(() =>
-    readStoredPremiumPreference(HERO_VIEW_KEY, false)
-  );
+  const [premiumHeroView, setPremiumHeroView] = useState(false);
+  const [premiumPreferenceLoaded, setPremiumPreferenceLoaded] = useState(false);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    setPremiumHeroView(readStoredPremiumPreference(HERO_VIEW_KEY, false));
+    setPremiumPreferenceLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!premiumPreferenceLoaded || typeof window === "undefined") return;
     window.localStorage.setItem(HERO_VIEW_KEY, premiumHeroView ? "premium" : "prod");
-  }, [premiumHeroView]);
+  }, [premiumHeroView, premiumPreferenceLoaded]);
 
   const chainId =
     typeof chainData === "string" && chainData.trim().length > 0
@@ -149,7 +168,7 @@ export default function WoloPage() {
           onClick={handleHeroToggle}
           className="overflow-hidden rounded-[1.85rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.16),_transparent_26%),radial-gradient(circle_at_bottom_right,_rgba(56,189,248,0.10),_transparent_28%),linear-gradient(135deg,_#0f172a,_#111827_56%,_#050816)] p-4 sm:rounded-[2rem] sm:p-6 lg:p-8"
         >
-          <div className="grid gap-5 lg:grid-cols-[1.12fr_0.88fr] lg:items-start lg:gap-8">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(25.75rem,27.25rem)] lg:items-start lg:gap-8">
             <div className="space-y-6">
               <div className="flex flex-wrap items-center gap-2">
                 <Link href="/wolochain" data-no-toggle="true" className="inline-flex">
@@ -173,7 +192,7 @@ export default function WoloPage() {
                   </div>
                   <div className="flex flex-wrap items-end gap-3">
                     <div
-                      className="text-[2.75rem] font-semibold leading-[0.9] tracking-[-0.04em] text-white sm:text-[3.35rem] lg:text-[4.5rem]"
+                      className="text-[2.5rem] font-semibold leading-[0.9] tracking-[-0.04em] text-white sm:text-[3.05rem] lg:text-[4.05rem]"
                       style={{
                         fontFamily:
                           '"Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif',
@@ -244,7 +263,7 @@ export default function WoloPage() {
                   className={WOLO_PROD_SECONDARY_ACTION_CLASSNAME}
                   data-no-toggle="true"
                 >
-                  Open Ping.pub
+                  Open Explorer
                 </a>
               </div>
 
@@ -255,7 +274,7 @@ export default function WoloPage() {
               ) : null}
             </div>
 
-            <div className="space-y-3.5">
+            <div className="w-full space-y-3.5 lg:max-w-[27.25rem] lg:justify-self-end">
               <div className="rounded-[1.8rem] border border-white/10 bg-[linear-gradient(180deg,rgba(11,17,30,0.96),rgba(7,11,19,0.96))] p-5 shadow-[0_28px_80px_rgba(2,6,23,0.34)] sm:p-6">
                 <div className="flex items-start justify-between gap-4">
                   <div className="text-[11px] uppercase tracking-[0.35em] text-amber-200/70">
@@ -268,7 +287,7 @@ export default function WoloPage() {
                 </div>
 
                 <div className="mt-5 grid gap-4">
-                  <PremiumWalletPanel label="Address" value={formatAddress(address)} mono />
+                  <PremiumWalletAddressPanel address={address} />
                   <PremiumWalletPanel
                     label="Balance"
                     value={balanceLoading ? "Loading..." : `${formattedBalance} WOLO`}
@@ -335,7 +354,7 @@ export default function WoloPage() {
         onClick={handleHeroToggle}
         className="overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.16),_transparent_24%),radial-gradient(circle_at_82%_18%,_rgba(56,189,248,0.12),_transparent_20%),linear-gradient(135deg,_#08111f,_#0b1324_44%,_#050814)] px-4 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8"
       >
-        <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr] xl:items-start xl:gap-8">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(25.75rem,27.25rem)] lg:items-start lg:gap-8">
           <div className="space-y-5">
             <div className="flex flex-wrap items-center gap-2">
               <Link href="/wolochain" data-no-toggle="true" className="inline-flex">
@@ -365,7 +384,7 @@ export default function WoloPage() {
 
                   <div className="flex flex-wrap items-end gap-x-4 gap-y-1 md:flex-nowrap">
                     <div
-                      className="text-[2.75rem] font-semibold leading-[0.9] tracking-[-0.04em] text-white sm:text-[3.35rem] lg:text-[4.5rem]"
+                      className="text-[2.5rem] font-semibold leading-[0.9] tracking-[-0.04em] text-white sm:text-[3.05rem] lg:text-[4.05rem]"
                       style={{
                         fontFamily:
                           '"Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif',
@@ -416,7 +435,7 @@ export default function WoloPage() {
               </div>
 
               <div className="mt-5 grid gap-4">
-                <PremiumWalletPanel label="Address" value={formatAddress(address)} mono />
+                <PremiumWalletAddressPanel address={address} />
                 <PremiumWalletPanel
                   label="Balance"
                   value={balanceLoading ? "Loading..." : `${formattedBalance} WOLO`}
@@ -593,6 +612,106 @@ function WoloSupplyWatermark() {
   );
 }
 
+function WalletCopyIcon({ copied }: { copied: boolean }) {
+  if (copied) {
+    return (
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        className="h-4 w-4"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M20 6 9 17l-5-5"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect
+        x="8"
+        y="8"
+        width="10"
+        height="10"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        d="M6 14H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function PremiumWalletAddressPanel({ address }: { address?: string }) {
+  const [copied, setCopied] = useState(false);
+  const cleanAddress = address?.trim() || "";
+  const displayAddress = cleanAddress || "Not connected";
+
+  async function handleCopy() {
+    if (!cleanAddress) return;
+
+    await copyTextToClipboard(cleanAddress);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  }
+
+  return (
+    <div
+      data-no-toggle="true"
+      className="rounded-[1.45rem] border border-white/8 bg-[#0d1420] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+    >
+      <div className="text-[11px] uppercase tracking-[0.26em] text-slate-400">
+        Address
+      </div>
+
+      <div className="mt-3 grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-full border border-white/10 bg-black/20 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+        <div
+          title={cleanAddress || undefined}
+          className="min-w-0 select-all overflow-hidden whitespace-nowrap font-mono text-[12.5px] font-semibold leading-none tracking-[-0.025em] text-white sm:text-[13px]"
+        >
+          {displayAddress}
+        </div>
+
+        {cleanAddress ? (
+          <button
+            type="button"
+            onClick={() => {
+              void handleCopy();
+            }}
+            aria-label={copied ? "Address copied" : "Copy wallet address"}
+            title={copied ? "Copied" : "Copy wallet address"}
+            className={`inline-flex shrink-0 items-center justify-center text-sm transition ${
+              copied
+                ? "text-emerald-200"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            <WalletCopyIcon copied={copied} />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function PremiumWalletPanel({
   label,
   value,
@@ -731,7 +850,7 @@ function WoloHeroActionDock({
             rel="noreferrer"
             className={WOLO_PREMIUM_PING_ACTION_CLASSNAME}
           >
-            Open Ping.pub
+            Open Explorer
           </a>
         ) : null}
       </div>

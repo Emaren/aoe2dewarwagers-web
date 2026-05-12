@@ -11,9 +11,7 @@ import {
   parseStatusLabel,
   readMapName,
   readPlayedAt,
-  replayParticipantsLabel,
   shortHash,
-  watcherMetadataContextLabels,
   winnerLabel,
 } from "@/lib/gameStatsView";
 
@@ -99,13 +97,6 @@ export default async function GameStatsPage() {
                 const players = parsePlayers(game.players);
                 const playedAt = readPlayedAt(game);
                 const outcomeLabel = outcomeBadgeLabel(game.parse_reason, game.winner);
-                const watcherContextLabels = watcherMetadataContextLabels(game.key_events);
-                const primaryWatcherContextLabels = watcherContextLabels.filter(
-                  (label) => !label.includes("candidate lobby ID")
-                );
-                const candidateWatcherContextLabels = watcherContextLabels.filter((label) =>
-                  label.includes("candidate lobby ID")
-                );
 
                 return (
                   <Link
@@ -119,7 +110,7 @@ export default async function GameStatsPage() {
                         <div className="mt-1 text-sm text-slate-300">
                           {players.length > 0
                             ? players.map((player) => displayPlayerName(player)).join(" vs ")
-                            : replayParticipantsLabel(game.players, game.parse_reason, game.key_events)}
+                            : "Players unavailable"}
                         </div>
                       </div>
                       <div className="text-right">
@@ -142,12 +133,6 @@ export default async function GameStatsPage() {
                       {game.user ? (
                         <Tag>{game.user.inGameName || game.user.steamPersonaName || game.user.uid}</Tag>
                       ) : null}
-                      {primaryWatcherContextLabels.slice(0, 2).map((label) => (
-                        <Tag key={label}>{label}</Tag>
-                      ))}
-                      {candidateWatcherContextLabels.slice(0, 1).map((label) => (
-                        <MutedTag key={label}>low confidence: {label}</MutedTag>
-                      ))}
                     </div>
 
                     {playedAt ? (
@@ -281,14 +266,6 @@ function EmptyPanel({ message }: { message: string }) {
 function Tag({ children }: { children: ReactNode }) {
   return (
     <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
-      {children}
-    </span>
-  );
-}
-
-function MutedTag({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-xs text-slate-500">
       {children}
     </span>
   );

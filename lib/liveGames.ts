@@ -53,8 +53,22 @@ export async function loadLiveGamesSnapshot(prisma: PrismaClient): Promise<LiveG
   ]);
 
   const { activeSessions, recentlyCompletedSessions } = sessionSnapshot;
-  const { tiles: scheduledMatches, matchedActiveSessionKeys, matchedCompletedSessionKeys } =
-    await loadScheduledMatchTilesForLiveBoard(prisma, activeSessions, recentlyCompletedSessions);
+  let scheduledMatches: ScheduledMatchTile[] = [];
+  let matchedActiveSessionKeys = new Set<string>();
+  let matchedCompletedSessionKeys = new Set<string>();
+
+  try {
+    const scheduledSnapshot = await loadScheduledMatchTilesForLiveBoard(
+      prisma,
+      activeSessions,
+      recentlyCompletedSessions
+    );
+    scheduledMatches = scheduledSnapshot.tiles;
+    matchedActiveSessionKeys = scheduledSnapshot.matchedActiveSessionKeys;
+    matchedCompletedSessionKeys = scheduledSnapshot.matchedCompletedSessionKeys;
+  } catch (error) {
+    console.warn("Failed to load scheduled matches for live games:", error);
+  }
 
   const filteredActiveSessions = activeSessions.filter(
     (session) => !matchedActiveSessionKeys.has(session.sessionKey)
@@ -75,10 +89,33 @@ export async function loadLiveGamesSnapshot(prisma: PrismaClient): Promise<LiveG
 
   const scheduledLiveCount = scheduledMatches.filter((match) => match.displayState === "live").length;
   const scheduledReadyCount = scheduledMatches.filter(
-    (match) => match.displayState === "accepted"
+    (match) =>
+      [
+        "accepted",
+        "terms_accepted",
+        "creator_funded",
+        "opponent_funded",
+        "funded",
+        "checkin_open",
+        "left_checked_in",
+        "right_checked_in",
+        "ready",
+      ].includes(match.displayState)
   ).length;
   const scheduledOnDeckCount = scheduledMatches.filter((match) =>
-    ["pending", "accepted"].includes(match.displayState)
+    [
+      "proposed",
+      "pending",
+      "accepted",
+      "terms_accepted",
+      "creator_funded",
+      "opponent_funded",
+      "funded",
+      "checkin_open",
+      "left_checked_in",
+      "right_checked_in",
+      "ready",
+    ].includes(match.displayState)
   ).length;
 
   return {

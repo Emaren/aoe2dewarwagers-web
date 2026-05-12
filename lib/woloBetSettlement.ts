@@ -11,6 +11,7 @@ import {
   WOLO_REST_URL,
   WOLO_RPC_URL,
   buildWoloRestTxLookupUrl,
+  estimateWoloNetworkFeeWolo,
   getWoloBetEscrowRuntime,
   toUwoLoAmount,
 } from "@/lib/woloChain";
@@ -20,6 +21,7 @@ export type StakeVerificationResult = {
   detail: string;
   txHash?: string;
   proofUrl?: string | null;
+  txFeeWolo?: number | null;
 };
 
 export type PayoutExecutionResult = {
@@ -37,6 +39,8 @@ export type SettlementRunPayoutInput = {
   memo?: string | null;
 };
 
+export type SettlementRunSignerRole = "payout" | "escrow";
+
 export type SettlementRunPayoutResult = {
   index: number;
   requestId: string;
@@ -47,6 +51,8 @@ export type SettlementRunPayoutResult = {
   failureCode: string | null;
   retryable: boolean;
   idempotentReplay: boolean;
+  signerRole?: string | null;
+  signerAddress?: string | null;
   toAddress: string | null;
   amountUWolo: string | null;
   amountWolo: string | null;
@@ -70,6 +76,9 @@ export type SettlementRunResult = {
   sourceEventId: string | null;
   note: string | null;
   memo: string | null;
+  signerRole?: string | null;
+  signerAddress?: string | null;
+  signerBalanceBeforeUWolo?: string | null;
   requestedPayoutCount: number;
   executedPayoutCount: number;
   confirmedPayoutCount: number;
@@ -169,6 +178,10 @@ type SettlementRunPayload = {
   source_event_id?: string;
   note?: string;
   memo?: string;
+  signer_role?: string;
+  signer_address?: string;
+  signer_balance_before_uwolo?: string;
+  signer_balance_before_wolo?: string;
   requested_payout_count?: number;
   executed_payout_count?: number;
   confirmed_payout_count?: number;
@@ -191,6 +204,8 @@ type SettlementRunPayload = {
     failure_code?: string;
     retryable?: boolean;
     idempotent_replay?: boolean;
+    signer_role?: string;
+    signer_address?: string;
     to_address?: string;
     amount_uwolo?: string;
     amount_wolo?: string;
@@ -324,6 +339,19 @@ export function hasWoloPayoutExecutionConfigured() {
   return Boolean(WOLO_SETTLEMENT_URL || hasLocalPayoutSignerFallbackConfigured());
 }
 
+export function hasWoloEscrowSettlementExecutionConfigured() {
+  return Boolean(WOLO_SETTLEMENT_URL);
+}
+
+export function getWoloPayoutSignerRuntime() {
+  return {
+    payoutAddress: WOLO_PAYOUT_ADDRESS || null,
+    settlementServiceConfigured: Boolean(WOLO_SETTLEMENT_URL),
+    localSignerFallbackEnabled: WOLO_LOCAL_PAYOUT_SIGNER_FALLBACK_ENABLED,
+    localSignerFallbackConfigured: hasLocalPayoutSignerFallbackConfigured(),
+  } as const;
+}
+
 function buildSettlementServiceUrl(
   path: string,
   search?: Record<string, string | null | undefined>
@@ -388,8 +416,8 @@ async function probeGroupedRunCapability(): Promise<{
       method: "POST",
       headers: buildSettlementMutationHeaders(),
       body: JSON.stringify({
-        settlement_run_id: "aoe2hdbets-capability-probe",
-        source_app: "aoe2hdbets",
+        settlement_run_id: "aoe2dewarwagers-capability-probe",
+        source_app: "aoe2dewarwagers",
         source_event_id: "capability-probe",
         note: "capability-probe",
         memo: "capability-probe",
@@ -595,11 +623,11 @@ export async function getWoloSettlementSurfaceStatus(): Promise<WoloSettlementSu
     const warnings: string[] = [];
     if (grouped.capability === "fallback_to_singles") {
       warnings.push(
-        "Grouped settlement is not live on the current WoloChain target. AoE2HDBets will fall back to single payout requests."
+        "Grouped settlement is not live on the current WoloChain target. AoE2DEWarWagers will fall back to single payout requests."
       );
     } else if (grouped.capability === "auth_required") {
       warnings.push(
-        "The current WoloChain target requires bearer auth for grouped settlement, but AoE2HDBets has no settlement auth token configured."
+        "The current WoloChain target requires bearer auth for grouped settlement, but AoE2DEWarWagers has no settlement auth token configured."
       );
     } else if (grouped.capability === "auth_failed") {
       warnings.push(
@@ -620,7 +648,7 @@ export async function getWoloSettlementSurfaceStatus(): Promise<WoloSettlementSu
       escrowRecent.capability === "unknown"
     ) {
       warnings.push(
-        "AoE2HDBets could not confirm every WoloChain escrow proof/discovery route on the current target."
+        "AoE2DEWarWagers could not confirm every WoloChain escrow proof/discovery route on the current target."
       );
     }
 
@@ -676,6 +704,24 @@ async function fetchTx(txHash: string) {
   }
 
   return response.json();
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchTxWithRetry(txHash: string, attempts = 6) {
+  for (let index = 0; index < attempts; index += 1) {
+    const payload = await fetchTx(txHash);
+    if (payload) return payload;
+    await sleep(700 + index * 350);
+  }
+  return null;
+}
+
+function txNetworkFeeWolo(payload: unknown) {
+  const txResponse = asRecord(asRecord(payload)?.tx_response);
+  return estimateWoloNetworkFeeWolo(getStringField(txResponse || {}, "gas_wanted"));
 }
 
 async function verifyStakeTransferViaSettlementService(input: {
@@ -878,6 +924,7 @@ function toRunRequestPayload(input: {
   sourceEventId?: string | null;
   note?: string | null;
   memo?: string | null;
+  signerRole?: SettlementRunSignerRole | null;
   payouts: SettlementRunPayoutInput[];
 }) {
   return {
@@ -886,6 +933,7 @@ function toRunRequestPayload(input: {
     source_event_id: input.sourceEventId?.trim() || undefined,
     note: input.note?.trim() || undefined,
     memo: input.memo?.trim() || undefined,
+    signer_role: input.signerRole?.trim() || undefined,
     payouts: input.payouts.map((payout) => ({
       request_id: payout.requestId?.trim() || undefined,
       to_address: payout.toAddress,
@@ -904,6 +952,7 @@ function toSettlementRunResult(
     sourceEventId?: string | null;
     note?: string | null;
     memo?: string | null;
+    signerRole?: SettlementRunSignerRole | null;
     requestedPayoutCount: number;
   }
 ): SettlementRunResult {
@@ -920,6 +969,9 @@ function toSettlementRunResult(
       payload.source_event_id?.trim() || input.sourceEventId?.trim() || null,
     note: payload.note?.trim() || input.note?.trim() || null,
     memo: payload.memo?.trim() || input.memo?.trim() || null,
+    signerRole: payload.signer_role?.trim() || input.signerRole?.trim() || null,
+    signerAddress: payload.signer_address?.trim() || null,
+    signerBalanceBeforeUWolo: payload.signer_balance_before_uwolo?.trim() || null,
     requestedPayoutCount: payload.requested_payout_count ?? input.requestedPayoutCount,
     executedPayoutCount: payload.executed_payout_count ?? 0,
     confirmedPayoutCount: payload.confirmed_payout_count ?? 0,
@@ -943,6 +995,8 @@ function toSettlementRunResult(
           failureCode: payout.failure_code?.trim() || null,
           retryable: Boolean(payout.retryable),
           idempotentReplay: Boolean(payout.idempotent_replay),
+          signerRole: payout.signer_role?.trim() || null,
+          signerAddress: payout.signer_address?.trim() || null,
           toAddress: payout.to_address?.trim() || null,
           amountUWolo: payout.amount_uwolo?.trim() || null,
           amountWolo: payout.amount_wolo?.trim() || null,
@@ -997,8 +1051,70 @@ async function executeWoloSettlementRunFallback(input: {
   sourceEventId?: string | null;
   note?: string | null;
   memo?: string | null;
+  signerRole?: SettlementRunSignerRole | null;
   payouts: SettlementRunPayoutInput[];
 }): Promise<SettlementRunResult> {
+  if (input.signerRole === "escrow") {
+    return {
+      ok: false,
+      dryRun: false,
+      status: "failed",
+      failureCode: "ESCROW_SETTLEMENT_SERVICE_UNCONFIGURED",
+      retryable: false,
+      idempotentReplay: false,
+      settlementRunId: input.settlementRunId,
+      sourceApp: input.sourceApp?.trim() || null,
+      sourceEventId: input.sourceEventId?.trim() || null,
+      note: input.note?.trim() || null,
+      memo: input.memo?.trim() || null,
+      signerRole: "escrow",
+      signerAddress: null,
+      signerBalanceBeforeUWolo: null,
+      requestedPayoutCount: input.payouts.length,
+      executedPayoutCount: 0,
+      confirmedPayoutCount: 0,
+      acceptedPayoutCount: 0,
+      refusedPayoutCount: input.payouts.length,
+      replayPayoutCount: 0,
+      requestedTotalUWolo: toUwoLoAmount(
+        input.payouts.reduce((sum, payout) => sum + payout.amountWolo, 0)
+      ),
+      executedTotalUWolo: "0",
+      projectedRemainingUWolo: null,
+      estimatedFeeTotalUWolo: null,
+      warnings: [
+        "Escrow settlement execution requires the WoloChain settlement service grouped run route with signer_role=escrow.",
+      ],
+      detail:
+        "Escrow settlement execution is not configured in this environment; refusing to fall back to the payout signer.",
+      payouts: input.payouts.map((payout, index) => ({
+        index,
+        requestId:
+          payout.requestId?.trim() ||
+          `${input.settlementRunId}:item-${String(index + 1).padStart(3, "0")}`,
+        attempted: false,
+        ok: false,
+        status: "skipped",
+        outcome: "not_configured",
+        failureCode: "ESCROW_SETTLEMENT_SERVICE_UNCONFIGURED",
+        retryable: false,
+        idempotentReplay: false,
+        signerRole: "escrow",
+        signerAddress: null,
+        toAddress: payout.toAddress,
+        amountUWolo: toUwoLoAmount(payout.amountWolo),
+        amountWolo: String(payout.amountWolo),
+        memo: payout.memo?.trim() || input.memo?.trim() || null,
+        txHash: null,
+        detail:
+          "Escrow settlement execution is not configured; payout signer fallback is disabled for escrow runs.",
+        proofUrl: null,
+        canonicalTxLookupPublic: null,
+        canonicalTxLookupInternal: null,
+      })),
+    };
+  }
+
   const localSignerFallbackConfigured = hasLocalPayoutSignerFallbackConfigured();
   if (!WOLO_SETTLEMENT_URL && !localSignerFallbackConfigured) {
     return {
@@ -1026,7 +1142,7 @@ async function executeWoloSettlementRunFallback(input: {
       projectedRemainingUWolo: null,
       estimatedFeeTotalUWolo: null,
       warnings: [
-        "WoloChain settlement service is not configured here. AoE2HDBets will not execute payouts locally unless WOLO_LOCAL_PAYOUT_SIGNER_FALLBACK=1 is set explicitly.",
+        "WoloChain settlement service is not configured here. AoE2DEWarWagers will not execute payouts locally unless WOLO_LOCAL_PAYOUT_SIGNER_FALLBACK=1 is set explicitly.",
       ],
       detail: "Settlement execution is not configured in this environment.",
       payouts: input.payouts.map((payout, index) => ({
@@ -1182,6 +1298,7 @@ export async function validateWoloSettlementRun(input: {
   sourceEventId?: string | null;
   note?: string | null;
   memo?: string | null;
+  signerRole?: SettlementRunSignerRole | null;
   payouts: SettlementRunPayoutInput[];
 }): Promise<SettlementRunResult | null> {
   if (!WOLO_SETTLEMENT_URL) {
@@ -1208,6 +1325,7 @@ export async function validateWoloSettlementRun(input: {
     sourceEventId: input.sourceEventId,
     note: input.note,
     memo: input.memo,
+    signerRole: input.signerRole,
     requestedPayoutCount: input.payouts.length,
   });
 }
@@ -1218,6 +1336,7 @@ export async function executeWoloSettlementRun(input: {
   sourceEventId?: string | null;
   note?: string | null;
   memo?: string | null;
+  signerRole?: SettlementRunSignerRole | null;
   payouts: SettlementRunPayoutInput[];
 }): Promise<SettlementRunResult> {
   if (WOLO_SETTLEMENT_URL) {
@@ -1238,12 +1357,25 @@ export async function executeWoloSettlementRun(input: {
         sourceEventId: input.sourceEventId,
         note: input.note,
         memo: input.memo,
+        signerRole: input.signerRole,
         requestedPayoutCount: input.payouts.length,
       });
     }
   }
 
   return executeWoloSettlementRunFallback(input);
+}
+
+export async function validateWoloEscrowSettlementRun(
+  input: Omit<Parameters<typeof validateWoloSettlementRun>[0], "signerRole">
+) {
+  return validateWoloSettlementRun({ ...input, signerRole: "escrow" });
+}
+
+export async function executeWoloEscrowSettlementRun(
+  input: Omit<Parameters<typeof executeWoloSettlementRun>[0], "signerRole">
+) {
+  return executeWoloSettlementRun({ ...input, signerRole: "escrow" });
 }
 
 export async function verifyStakeTransfer(input: {
@@ -1315,10 +1447,76 @@ export async function verifyStakeTransfer(input: {
     detail: "Stake tx verified via WOLO REST fallback.",
     txHash: normalizedTxHash,
     proofUrl: buildWoloRestTxLookupUrl(normalizedTxHash),
+    txFeeWolo: txNetworkFeeWolo(payload),
   };
 }
 
+export async function verifyWoloTransfer(input: {
+  txHash: string;
+  fromAddress: string;
+  toAddress: string;
+  expectedAmountWolo: number;
+}): Promise<StakeVerificationResult> {
+  const normalizedTxHash = normalizeTxHash(input.txHash);
+  if (!normalizedTxHash) {
+    return { verified: false, detail: "Transaction hash is required." };
+  }
+
+  const fromAddressError = validateWoloAddress(input.fromAddress);
+  if (fromAddressError) {
+    return { verified: false, detail: fromAddressError };
+  }
+
+  const toAddressError = validateWoloAddress(input.toAddress);
+  if (toAddressError) {
+    return { verified: false, detail: toAddressError };
+  }
+
+  const payload = await fetchTxWithRetry(normalizedTxHash);
+  if (!payload) {
+    return { verified: false, detail: "Tx could not be loaded from the WOLO REST API." };
+  }
+
+  const txResponse = asRecord(asRecord(payload)?.tx_response);
+  const codeValue = Number(txResponse?.code ?? 0);
+  if (!txResponse || codeValue !== 0) {
+    return {
+      verified: false,
+      detail: `Tx failed or returned code ${String(txResponse?.code ?? "unknown")}.`,
+    };
+  }
+
+  const expectedAmount = `${toUwoLoAmount(input.expectedAmountWolo)}${WOLO_BASE_DENOM}`;
+  const transfers = extractTransferEvents(payload);
+  const matched = transfers.some((event) =>
+    normalizeAddress(event.sender) === normalizeAddress(input.fromAddress) &&
+    normalizeAddress(event.recipient) === normalizeAddress(input.toAddress) &&
+    event.amount.split(",").map((value) => value.trim()).includes(expectedAmount)
+  );
+
+  if (!matched) {
+    return {
+      verified: false,
+      detail: `Tx did not show ${expectedAmount} from ${input.fromAddress} to ${input.toAddress}.`,
+    };
+  }
+
+  return {
+    verified: true,
+    detail: "Tx verified via WOLO REST.",
+    txHash: normalizedTxHash,
+    proofUrl: buildWoloRestTxLookupUrl(normalizedTxHash),
+    txFeeWolo: txNetworkFeeWolo(payload),
+  };
+}
+
+export async function readWoloTxNetworkFeeWolo(txHash: string) {
+  const payload = await fetchTxWithRetry(txHash, 4);
+  return payload ? txNetworkFeeWolo(payload) : null;
+}
+
 export async function executeWoloPayout(input: {
+  requestId?: string | null;
   toAddress: string;
   amountWolo: number;
   memo: string;

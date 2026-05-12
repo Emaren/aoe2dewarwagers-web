@@ -1,4 +1,4 @@
-// /var/www/AoE2HDBets/app-prodn/app/api/auth/session/route.ts
+// /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn/app/api/auth/session/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import { getPrisma } from "@/lib/prisma";

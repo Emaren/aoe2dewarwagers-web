@@ -5,6 +5,7 @@ export const WOLO_CHAIN_NAME = "WoloChain Testnet";
 export const WOLO_ADDRESS_PREFIX = "wolo";
 export const WOLO_BASE_DENOM = "uwolo";
 export const WOLO_DISPLAY_DENOM = "WOLO";
+export const WOLO_LOGO_URL = "https://explorer.testnet.aoe2dewarwagers.com/logos/wolo-keplr-256.png";
 export const WOLO_COIN_DECIMALS = 6;
 export const WOLO_COIN_TYPE = 118;
 
@@ -21,12 +22,19 @@ export const WOLO_BET_ESCROW_ADDRESS =
   process.env.WOLO_BET_ESCROW_ADDRESS?.trim() ||
   "";
 
+export const WOLO_CHALLENGE_ESCROW_ADDRESS =
+  process.env.NEXT_PUBLIC_WOLO_CHALLENGE_ESCROW_ADDRESS?.trim() ||
+  process.env.WOLO_CHALLENGE_ESCROW_ADDRESS?.trim() ||
+  WOLO_BET_ESCROW_ADDRESS;
+
 export type WoloBetEscrowMode = "disabled" | "optional" | "required";
 
 export const WOLO_DEFAULT_GAS_PRICE =
   process.env.NEXT_PUBLIC_WOLO_GAS_PRICE?.trim() ||
   process.env.WOLO_GAS_PRICE?.trim() ||
   `0.025${WOLO_BASE_DENOM}`;
+
+export const WOLO_TYPICAL_TX_GAS = 52_960;
 
 const explicitBetEscrowMode =
   process.env.NEXT_PUBLIC_WOLO_BET_ESCROW_MODE?.trim().toLowerCase() ||
@@ -104,6 +112,27 @@ export function toUwoLoAmount(amountWolo: number) {
   return String(Math.max(0, Math.round(amountWolo * 10 ** WOLO_COIN_DECIMALS)));
 }
 
+export function parseWoloGasPriceMinimalDenom(value = WOLO_DEFAULT_GAS_PRICE) {
+  const match = value.trim().match(/^([0-9]+(?:\.[0-9]+)?)\s*([a-zA-Z0-9/]+)$/);
+  if (!match || match[2] !== WOLO_BASE_DENOM) return 0;
+  const parsed = Number.parseFloat(match[1]);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function estimateWoloNetworkFeeWolo(gasWanted?: number | string | bigint | null) {
+  const gas =
+    typeof gasWanted === "number"
+      ? gasWanted
+      : typeof gasWanted === "bigint"
+        ? Number(gasWanted)
+      : typeof gasWanted === "string"
+        ? Number.parseInt(gasWanted, 10)
+        : WOLO_TYPICAL_TX_GAS;
+  const gasPriceMinimalDenom = parseWoloGasPriceMinimalDenom();
+  if (!Number.isFinite(gas) || gas <= 0 || gasPriceMinimalDenom <= 0) return 0;
+  return (gas * gasPriceMinimalDenom) / 10 ** WOLO_COIN_DECIMALS;
+}
+
 export function buildWoloRestTxLookupUrl(txHash?: string | null) {
   const normalized = (txHash || "").trim().toUpperCase();
   if (!normalized) return null;
@@ -124,6 +153,7 @@ function buildBech32Config(prefix: string) {
 export const woloChainConfig = {
   chainId: WOLO_CHAIN_ID,
   chainName: WOLO_CHAIN_NAME,
+  chainSymbolImageUrl: WOLO_LOGO_URL,
   rpc: WOLO_RPC_URL,
   rest: WOLO_REST_URL,
   bip44: { coinType: WOLO_COIN_TYPE },
@@ -132,12 +162,14 @@ export const woloChainConfig = {
     coinDenom: WOLO_DISPLAY_DENOM,
     coinMinimalDenom: WOLO_BASE_DENOM,
     coinDecimals: WOLO_COIN_DECIMALS,
+    coinImageUrl: WOLO_LOGO_URL,
   },
   currencies: [
     {
       coinDenom: WOLO_DISPLAY_DENOM,
       coinMinimalDenom: WOLO_BASE_DENOM,
       coinDecimals: WOLO_COIN_DECIMALS,
+      coinImageUrl: WOLO_LOGO_URL,
     },
   ],
   feeCurrencies: [
@@ -145,6 +177,7 @@ export const woloChainConfig = {
       coinDenom: WOLO_DISPLAY_DENOM,
       coinMinimalDenom: WOLO_BASE_DENOM,
       coinDecimals: WOLO_COIN_DECIMALS,
+      coinImageUrl: WOLO_LOGO_URL,
       gasPriceStep: {
         low: 0.01,
         average: 0.025,
@@ -152,5 +185,5 @@ export const woloChainConfig = {
       },
     },
   ],
-  features: ["stargate", "ibc-transfer"],
+  features: ["ibc-transfer"],
 } as const;

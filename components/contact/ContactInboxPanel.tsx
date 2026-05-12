@@ -4,15 +4,18 @@
 import Link from "next/link";
 import { MessageCirclePlus, Mic, Paperclip } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import CommunityBadgePill from "@/components/contact/CommunityBadgePill";
+import ScheduledMatchCard from "@/components/challenge/ScheduledMatchCard";
+import TimeDisplayText from "@/components/time/TimeDisplayText";
 import AutoGrowTextarea from "@/components/ui/AutoGrowTextarea";
 import {
   DIRECT_MESSAGE_MAX_CHARS,
   DIRECT_MESSAGE_REACTIONS,
 } from "@/lib/contactInboxConfig";
 import { AI_CONCIERGE_NAME, AI_CONCIERGE_UID } from "@/lib/aiConciergeConfig";
+import { summarizeChallengeInboxMessage } from "@/lib/challengeInboxMessages";
 import type {
   ContactChallengeActionKind,
   ContactChallengeActionState,
@@ -20,7 +23,6 @@ import type {
   ContactInboxPayload,
   ContactInboxSummary,
 } from "@/components/contact/types";
-import { CHALLENGE_NOTE_MAX_CHARS } from "@/lib/challengeConfig";
 
 type ContactInboxPanelProps = {
   data: ContactInboxPayload | null;
@@ -38,12 +40,17 @@ type ContactInboxPanelProps = {
     action: ContactChallengeActionKind;
     scheduledAt?: string;
     challengeNote?: string;
+    wagerAmountWolo?: number;
+    guaranteeAmountWolo?: number;
+    fundingTxHash?: string;
+    fundingWalletAddress?: string;
   }) => void | Promise<void>;
   challengeActionState?: ContactChallengeActionState | null;
   onToggleReaction?: (messageId: number, emoji: string) => void;
   reactingMessageId?: number | null;
   richComposer?: ReactNode;
   openPageHref?: string;
+  onOpenFullPage?: () => void;
 };
 
 type TimelineRow =
@@ -143,122 +150,85 @@ function buildPrompt(
   return counterpartName ? `Reply to ${counterpartName}...` : "Write a message...";
 }
 
-function toLocalDateTimeValue(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return "";
+function challengeNoticeTone(
+  summary: ReturnType<typeof summarizeChallengeInboxMessage>
+) {
+  if (!summary) {
+    return null;
   }
 
-  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
-
-function formatChallengeDuration(diffMs: number) {
-  const totalSeconds = Math.max(0, Math.floor(Math.abs(diffMs) / 1000));
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (days > 0) {
-    return `${days}d ${hours}h`;
-  }
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function challengeStatusLine(challenge: NonNullable<ContactInboxPayload["activeChallenge"]>) {
-  const nowMs = Date.now();
-  const scheduledMs = new Date(challenge.scheduledAt).getTime();
-  const untilStart = scheduledMs - nowMs;
-
-  switch (challenge.displayState) {
-    case "pending":
-      return {
-        status: "Awaiting acceptance",
-        detail:
-          untilStart >= 0
-            ? `Starts in ${formatChallengeDuration(untilStart)}`
-            : `Window passed ${formatChallengeDuration(untilStart)} ago`,
-      };
+  switch (summary.state) {
     case "accepted":
+    case "terms_accepted":
+    case "ready":
       return {
-        status: "Ready",
-        detail: `Game starting in ${formatChallengeDuration(untilStart)}`,
+        summary,
+        shell:
+          "border-emerald-300/18 bg-emerald-400/10 text-emerald-50 shadow-[inset_0_0_0_1px_rgba(74,222,128,0.08)]",
       };
-    case "live":
+    case "funding":
+    case "checkin":
+    case "scheduled":
+    case "rescheduled":
+    case "result_ready":
       return {
-        status: "Now playing",
-        detail: challenge.linkedSessionKey ? "Live session linked." : "Start window is open.",
+        summary,
+        shell:
+          "border-amber-300/18 bg-amber-400/10 text-amber-50 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.08)]",
       };
-    case "completed":
-      return {
-        status: "Final stored",
-        detail: challenge.linkedWinner ? `Winner ${challenge.linkedWinner}` : "Replay proof linked.",
-      };
-    case "forfeited":
-      return {
-        status: "Forfeit",
-        detail: "Missed start by 1m.",
-      };
+    case "no_show":
     case "declined":
-      return {
-        status: "Declined",
-        detail: "Send a new time to reopen the duel.",
-      };
     case "cancelled":
       return {
-        status: "Cancelled",
-        detail: "Reopen it with a fresh start time.",
-      };
-    default:
-      return {
-        status: "Scheduled",
-        detail: new Date(challenge.scheduledAt).toLocaleString(),
+        summary,
+        shell:
+          "border-rose-300/18 bg-rose-500/10 text-rose-50 shadow-[inset_0_0_0_1px_rgba(251,113,133,0.08)]",
       };
   }
 }
 
-function challengeTone(displayState: NonNullable<ContactInboxPayload["activeChallenge"]>["displayState"]) {
-  switch (displayState) {
-    case "pending":
-      return {
-        shell: "border-amber-300/25 bg-amber-400/10",
-        badge: "border-amber-300/25 bg-amber-300/12 text-amber-100",
-        eyebrow: "text-amber-100/80",
-      };
-    case "accepted":
-    case "completed":
-      return {
-        shell: "border-emerald-300/25 bg-emerald-500/10",
-        badge: "border-emerald-300/25 bg-emerald-300/12 text-emerald-50",
-        eyebrow: "text-emerald-100/80",
-      };
-    case "live":
-      return {
-        shell: "border-cyan-300/25 bg-cyan-400/10",
-        badge: "border-cyan-300/25 bg-cyan-300/12 text-cyan-50",
-        eyebrow: "text-cyan-100/80",
-      };
-    case "forfeited":
-    case "declined":
-      return {
-        shell: "border-rose-300/25 bg-rose-500/10",
-        badge: "border-rose-300/25 bg-rose-300/12 text-rose-50",
-        eyebrow: "text-rose-100/80",
-      };
-    case "cancelled":
-    default:
-      return {
-        shell: "border-white/10 bg-white/[0.04]",
-        badge: "border-white/15 bg-white/[0.08] text-slate-100",
-        eyebrow: "text-slate-300/80",
-      };
-  }
+function ChallengeSystemMessageLine({
+  message,
+  compactNotice,
+}: {
+  message: Extract<ContactInboxMessage, { kind: "text" }>;
+  compactNotice: NonNullable<ReturnType<typeof challengeNoticeTone>>;
+}) {
+  const summary = compactNotice.summary;
+  const parts = [
+    summary.compactHeadline,
+    summary.matchup,
+    summary.fundingLabel,
+    summary.statusLabel,
+    summary.note ? "note attached" : null,
+  ].filter(Boolean);
+
+  return (
+    <div className="flex justify-center">
+      <div
+        title={message.body}
+        className={`max-w-full rounded-full border px-3 py-1.5 text-[11px] font-medium ${compactNotice.shell}`}
+      >
+        <div className="truncate whitespace-nowrap">
+          {parts.slice(0, 2).join(" · ")}
+          {summary.scheduledAtIso ? (
+            <>
+              {" · "}
+              <TimeDisplayText
+                value={summary.scheduledAtIso}
+                includeZone={false}
+                className="text-inherit"
+                bubbleClassName="w-max max-w-[18rem] text-center"
+              />
+            </>
+          ) : summary.scheduledLabel ? (
+            ` · ${summary.scheduledLabel}`
+          ) : null}
+          {parts.length > 2 ? ` · ${parts.slice(2).join(" · ")}` : ""}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ChallengeThreadStrip({
@@ -274,218 +244,50 @@ function ChallengeThreadStrip({
 }) {
   const challenge = data.activeChallenge;
   const counterpart = data.activeCounterpart;
-  const challengeId = challenge?.id ?? null;
-  const challengeScheduledAt = challenge?.scheduledAt ?? null;
-  const challengeNoteValue = challenge?.challengeNote ?? "";
-  const [showRescheduleForm, setShowRescheduleForm] = useState(false);
-  const [scheduledAt, setScheduledAt] = useState(() =>
-    challenge ? toLocalDateTimeValue(challenge.scheduledAt) : ""
-  );
-  const [challengeNote, setChallengeNote] = useState(challengeNoteValue);
-
-  useEffect(() => {
-    setShowRescheduleForm(false);
-    setScheduledAt(challengeScheduledAt ? toLocalDateTimeValue(challengeScheduledAt) : "");
-    setChallengeNote(challengeNoteValue);
-  }, [challengeId, challengeScheduledAt, challengeNoteValue]);
 
   if (!challenge || !counterpart || counterpart.threadKind !== "direct") {
     return null;
   }
 
-  const tone = challengeTone(challenge.displayState);
-  const status = challengeStatusLine(challenge);
-  const viewerIsChallenger = data.viewer.uid === challenge.challenger.uid;
-  const viewerIsChallenged = data.viewer.uid === challenge.challenged.uid;
-  const canAccept = viewerIsChallenged && challenge.displayState === "pending";
-  const canDecline = viewerIsChallenged && challenge.displayState === "pending";
-  const canCancel =
-    (viewerIsChallenger && challenge.displayState === "pending") ||
-    ((viewerIsChallenger || viewerIsChallenged) && challenge.displayState === "accepted");
-  const canReschedule =
-    viewerIsChallenger || viewerIsChallenged
-      ? ["pending", "accepted", "declined", "cancelled"].includes(challenge.displayState)
-      : false;
-  const currentAction =
-    challengeActionState?.challengeId === challenge.id ? challengeActionState.action : null;
-  const isBusy = Boolean(currentAction);
-  const reopenLabel =
-    challenge.displayState === "declined" || challenge.displayState === "cancelled"
-      ? "Challenge Again"
-      : "Reschedule";
-  const compact = mode === "popover";
-  const actionSizing = compact ? "px-2.5 py-1.5 text-[11px]" : "px-3 py-2 text-xs";
-
-  async function handleReschedule(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!onChallengeAction || !scheduledAt.trim() || challengeId === null) {
-      return;
-    }
-
-    await onChallengeAction({
-      challengeId,
-      action: "reschedule",
-      scheduledAt: new Date(scheduledAt).toISOString(),
-      challengeNote,
-    });
-    setShowRescheduleForm(false);
-  }
-
   return (
-    <div
-      className={`rounded-[1.1rem] border ${compact ? "mt-2.5 px-3 py-2.5" : "mt-3 px-3.5 py-3"} ${
-        tone.shell
-      }`}
-    >
-      <div
-        className={`grid ${compact ? "gap-2 sm:grid-cols-[minmax(0,1fr)_124px]" : "gap-2.5 sm:grid-cols-[minmax(0,1fr)_auto]"}`}
-      >
-        <div className="min-w-0">
-          <div className={`${compact ? "text-[9px]" : "text-[10px]"} uppercase tracking-[0.26em] ${tone.eyebrow}`}>
-            Challenge runway
-          </div>
-          <div className={`mt-1 ${compact ? "text-[15px]" : "text-sm"} font-semibold text-white`}>
-            {challenge.challenger.name} vs {challenge.challenged.name}
-          </div>
-          {challenge.challengeNote ? (
-            <div className="mt-1 line-clamp-1 text-[11px] text-slate-300">
-              {challenge.challengeNote}
-            </div>
-          ) : null}
-          <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] text-slate-200">
-            <span className="rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-0.5">
-              {new Date(challenge.scheduledAt).toLocaleString([], {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </span>
-            {challenge.linkedMapName ? (
-              <span className="rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-0.5">
-                {challenge.linkedMapName}
-              </span>
-            ) : null}
-          </div>
-        </div>
-
-        <div className={`rounded-[0.95rem] border border-white/10 bg-slate-950/25 ${compact ? "px-2.5 py-1.5" : "px-3 py-2"} text-left sm:text-right`}>
-          <div className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] ${tone.badge}`}>
-            {status.status}
-          </div>
-          <div className="mt-1 text-xs font-semibold text-white/95">{status.status}</div>
-          <div className="mt-0.5 text-[11px] text-slate-300">{status.detail}</div>
-        </div>
-      </div>
-
-      <div className={`mt-2.5 flex flex-wrap gap-1.5 ${compact ? "" : "justify-end"}`}>
-        {canAccept ? (
-          <button
-            type="button"
-            disabled={isBusy}
-            onClick={() => void onChallengeAction?.({ challengeId: challenge.id, action: "accept" })}
-            className={`rounded-full bg-white font-semibold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60 ${actionSizing}`}
-          >
-            {currentAction === "accept" ? "Accepting..." : "Accept"}
-          </button>
-        ) : null}
-        {canDecline ? (
-          <button
-            type="button"
-            disabled={isBusy}
-            onClick={() => void onChallengeAction?.({ challengeId: challenge.id, action: "decline" })}
-            className={`rounded-full border border-rose-300/30 bg-rose-500/10 font-semibold text-rose-50 transition hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-60 ${actionSizing}`}
-          >
-            {currentAction === "decline" ? "Declining..." : "Decline"}
-          </button>
-        ) : null}
-        {canCancel ? (
-          <button
-            type="button"
-            disabled={isBusy}
-            onClick={() => void onChallengeAction?.({ challengeId: challenge.id, action: "cancel" })}
-            className={`rounded-full border border-white/15 text-white/85 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-60 ${actionSizing}`}
-          >
-            {currentAction === "cancel" ? "Cancelling..." : "Cancel"}
-          </button>
-        ) : null}
-        {canReschedule ? (
-          <button
-            type="button"
-            disabled={isBusy}
-            onClick={() => setShowRescheduleForm((current) => !current)}
-            className={`rounded-full border border-amber-300/30 bg-amber-400/10 text-amber-100 transition hover:bg-amber-400/15 disabled:cursor-not-allowed disabled:opacity-60 ${actionSizing}`}
-          >
-            {showRescheduleForm ? "Close" : reopenLabel}
-          </button>
-        ) : null}
-        <Link
-          href={
-            challenge.displayState === "live" && challenge.linkedSessionKey
-              ? `/game-stats/live/${encodeURIComponent(challenge.linkedSessionKey)}`
-              : "/challenge"
-          }
-          className={`rounded-full border border-white/15 text-white/85 transition hover:border-white/30 hover:text-white ${actionSizing}`}
-        >
-          {challenge.displayState === "live" && challenge.linkedSessionKey
-            ? "Watch Live Stats"
-            : mode === "popover"
-              ? "Open Runway"
-              : "Open Challenge Hub"}
-        </Link>
-      </div>
-
-      {canReschedule && showRescheduleForm ? (
-        <form
-          onSubmit={handleReschedule}
-          className={`mt-2.5 space-y-2.5 rounded-[0.95rem] border border-white/10 bg-slate-950/35 ${compact ? "p-2.5" : "p-3"}`}
-        >
-          <label className="block space-y-1.5">
-            <span className="text-[10px] uppercase tracking-[0.2em] text-slate-300">New Start</span>
-            <input
-              type="datetime-local"
-              value={scheduledAt}
-              onChange={(event) => setScheduledAt(event.target.value)}
-              disabled={isBusy}
-              className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/50 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-[10px] uppercase tracking-[0.2em] text-slate-300">Updated Note</span>
-            <AutoGrowTextarea
-              value={challengeNote}
-              onChange={(event) =>
-                setChallengeNote(event.target.value.slice(0, CHALLENGE_NOTE_MAX_CHARS))
+    <div className="mt-3">
+      <ScheduledMatchCard
+        match={challenge}
+        viewerUid={data.viewer.uid}
+        compact={mode === "popover"}
+        defaultViewMode="summary"
+        allowExpand
+        onAccept={(challengeId) => onChallengeAction?.({ challengeId, action: "accept" })}
+        onDecline={(challengeId) => onChallengeAction?.({ challengeId, action: "decline" })}
+        onCancel={(challengeId) => onChallengeAction?.({ challengeId, action: "cancel" })}
+        onReschedule={(challengeId, payload) =>
+          onChallengeAction?.({
+            challengeId,
+            action: "reschedule",
+            scheduledAt: payload.scheduledAt,
+            challengeNote: payload.challengeNote,
+            wagerAmountWolo: payload.wagerAmountWolo,
+            guaranteeAmountWolo: payload.guaranteeAmountWolo,
+          })
+        }
+        onFund={(challengeId, payload) =>
+          onChallengeAction?.({
+            challengeId,
+            action: "fund",
+            fundingTxHash: payload.fundingTxHash,
+            fundingWalletAddress: payload.fundingWalletAddress,
+          })
+        }
+        onCheckIn={(challengeId) => onChallengeAction?.({ challengeId, action: "check_in" })}
+        actionState={
+          challengeActionState
+            ? {
+                challengeId: challengeActionState.challengeId,
+                kind: challengeActionState.action,
               }
-              maxRows={mode === "popover" ? 3 : 4}
-              maxLength={CHALLENGE_NOTE_MAX_CHARS}
-              disabled={isBusy}
-              className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/50 disabled:cursor-not-allowed disabled:opacity-60"
-              placeholder="Push it back 30 minutes."
-            />
-            <div className="text-right text-[10px] uppercase tracking-[0.18em] text-slate-500">
-              {challengeNote.length}/{CHALLENGE_NOTE_MAX_CHARS}
-            </div>
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              type="submit"
-              disabled={isBusy}
-              className={`rounded-full bg-amber-300 font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60 ${actionSizing}`}
-            >
-              {currentAction === "reschedule" ? "Sending..." : "Send New Time"}
-            </button>
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={() => setShowRescheduleForm(false)}
-              className={`rounded-full border border-white/15 text-white/85 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-60 ${actionSizing}`}
-            >
-              Close
-            </button>
-          </div>
-        </form>
-      ) : null}
+            : null
+        }
+      />
     </div>
   );
 }
@@ -725,6 +527,7 @@ function TextMessageBubble({
     mode === "page" ? "max-h-[min(46vh,28rem)] overflow-y-auto pr-1" : "max-h-48 overflow-y-auto pr-1";
   const canToggleLobbyShare =
     message.sender.uid === AI_CONCIERGE_UID && !message.attachment && message.body.trim().length > 0;
+  const compactChallengeNotice = message.body ? challengeNoticeTone(summarizeChallengeInboxMessage(message.body)) : null;
   const [trayPinnedOpen, setTrayPinnedOpen] = useState(false);
   const [trayHovered, setTrayHovered] = useState(false);
   const [attachmentPreviewFailed, setAttachmentPreviewFailed] = useState(false);
@@ -862,6 +665,10 @@ function TextMessageBubble({
       messageId: message.messageId,
     });
     setTrayPinnedOpen(false);
+  }
+
+  if (compactChallengeNotice) {
+    return <ChallengeSystemMessageLine message={message} compactNotice={compactChallengeNotice} />;
   }
 
   const trayVisible = trayPinnedOpen || trayHovered;
@@ -1149,6 +956,7 @@ export default function ContactInboxPanel({
   reactingMessageId,
   richComposer,
   openPageHref,
+  onOpenFullPage,
 }: ContactInboxPanelProps) {
   const counterpart = data?.activeCounterpart ?? null;
   const activeTargetUid = data?.activeTargetUid ?? null;
@@ -1417,6 +1225,7 @@ export default function ContactInboxPanel({
               <div className="mt-3 flex justify-end">
                 <Link
                   href={openPageHref}
+                  onClick={onOpenFullPage}
                   className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-slate-500 transition hover:text-white"
                 >
                   <MessageCirclePlus className="h-3.5 w-3.5" />

@@ -1,3 +1,3 @@
 #!/bin/bash
-cd /var/www/AoE2HDBets/app-prodn
+cd /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn
 yarn start

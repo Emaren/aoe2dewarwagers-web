@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { OfflineSigner } from "@cosmjs/proto-signing";
+import { Monitor, MonitorOff, Play } from "lucide-react";
 import { toast } from "sonner";
 
 import BetsViewToggle from "@/components/bets/BetsViewToggle";
@@ -13,6 +14,7 @@ import YourBookSection from "@/components/bets/YourBookSection";
 import FounderBonusChips from "@/components/bets/FounderBonusChips";
 import FounderBonusModal from "@/components/bets/FounderBonusModal";
 import WarTape from "@/components/bets/WarTape";
+import { isRecoveryBookOpen } from "@/components/bets/page-shared";
 import { useUserAuth } from "@/context/UserAuthContext";
 import { useKeplr } from "@/hooks/use-keplr";
 import { useWoloBalance } from "@/hooks/useWoloBalance";
@@ -28,12 +30,52 @@ import {
 const WOLO_LOGO_SRC = "/legacy/wolo-logo-transparent.png";
 const STAKE_OPTIONS = [10, 25, 50, 100] as const;
 const BETS_POLL_INTERVAL_MS = 5_000;
-const STAKE_RECOVERY_STORAGE_KEY = "AoE2DEWarWagers.betStakeRecovery.v1";
-const BETS_VIEW_STORAGE_KEY = "AoE2DEWarWagers.betsView.v1";
+const STAKE_RECOVERY_STORAGE_KEY = "aoe2dewarwagers.betStakeRecovery.v1";
+const BETS_VIEW_STORAGE_KEY = "aoe2dewarwagers.betsView.v1";
 type BetSide = "left" | "right";
 type BetStatus = "open" | "closing" | "live" | "settled";
 type BetsViewMode = "basic" | "advanced";
 type FounderBonusType = "participants" | "winner";
+type BroadcastViewKey = "left" | "god" | "right";
+
+type BroadcastFeed = {
+  id: number;
+  sessionKey: string;
+  provider: "twitch" | "youtube" | "steam" | "discord" | "custom";
+  role: "caster" | "observer" | "player_pov" | "team_pov" | "postgame" | "external";
+  label: string;
+  url: string;
+  embedId: string | null;
+  playerLabel: string | null;
+  isPrimary: boolean;
+  status: string;
+  canEmbed: boolean;
+  externalOnly: boolean;
+};
+
+type BroadcastFeeds = {
+  left: BroadcastFeed | null;
+  god: BroadcastFeed | null;
+  right: BroadcastFeed | null;
+};
+
+type BroadcastPreviewUrls = {
+  left: string | null;
+  god: string | null;
+  right: string | null;
+};
+
+const EMPTY_BROADCAST_FEEDS: BroadcastFeeds = {
+  left: null,
+  god: null,
+  right: null,
+};
+
+const EMPTY_BROADCAST_PREVIEW_URLS: BroadcastPreviewUrls = {
+  left: null,
+  god: null,
+  right: null,
+};
 
 type BetBoardSide = {
   key: BetSide;
@@ -56,11 +98,14 @@ type BetBoardMarket = {
   status: BetStatus;
   featured: boolean;
   closeLabel: string;
+  scheduledStartAt: string | null;
   totalPotWolo: number;
   left: BetBoardSide;
   right: BetBoardSide;
   founderBonuses: BetFounderChip[];
   warTape: BetWarTapeRow[];
+  broadcastFeeds: BroadcastFeeds;
+  broadcastPreviewUrls: BroadcastPreviewUrls;
   viewerWager: {
     side: BetSide;
     amountWolo: number;
@@ -106,6 +151,7 @@ type BetBookEntry = {
   slipCount: number;
   projectedReturnWolo: number;
   closeLabel: string;
+  scheduledStartAt: string | null;
   status: BetStatus;
   executionMode: "app_only" | "onchain_escrow";
   stakeTxHash: string | null;
@@ -122,6 +168,9 @@ type BetSettledResult = {
   payoutWolo: number;
   settledAt: string | null;
   href: string | null;
+  linkedSessionKey: string | null;
+  broadcastFeeds: BroadcastFeeds;
+  broadcastPreviewUrls: BroadcastPreviewUrls;
   founderBonuses: BetFounderChip[];
 };
 
@@ -154,6 +203,7 @@ type BetBoardSnapshot = {
     unresolvedStakeIntents: Array<{
       id: number;
       marketId: number;
+      marketStatus: BetStatus;
       title: string;
       eventLabel: string;
       side: BetSide;
@@ -380,6 +430,75 @@ function formatSettledTime(value: string | null) {
   });
 }
 
+function formatScheduledStart(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatStartsIn(diffMs: number) {
+  if (diffMs <= 0) return "Live now";
+
+  const totalMinutes = Math.max(1, Math.floor(diffMs / 60_000));
+  if (totalMinutes >= 24 * 60) {
+    const days = Math.floor(totalMinutes / (24 * 60));
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    return `Starts in ${days}d ${hours}h`;
+  }
+
+  if (totalMinutes >= 60) {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `Starts in ${hours}h ${minutes}m`;
+  }
+
+  return `Starts in ${totalMinutes}m`;
+}
+
+function getMarketTiming(market: BetBoardMarket, nowMs: number) {
+  const startLabel = formatScheduledStart(market.scheduledStartAt);
+  if (!startLabel) {
+    return null;
+  }
+
+  const startMs = new Date(market.scheduledStartAt || "").getTime();
+  const countdownLabel =
+    market.status === "live" || startMs <= nowMs ? "Live now" : formatStartsIn(startMs - nowMs);
+
+  return {
+    startLabel,
+    countdownLabel,
+  };
+}
+
+function useNowTicker(intervalMs = 30_000) {
+  const [nowMs, setNowMs] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => setNowMs(Date.now());
+    refresh();
+
+    const interval = window.setInterval(refresh, intervalMs);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [intervalMs]);
+
+  return nowMs;
+}
+
 function projectReturn(stakeWolo: number, selectedPoolWolo: number, oppositePoolWolo: number) {
   if (stakeWolo <= 0) return 0;
   const nextSelectedPool = selectedPoolWolo + stakeWolo;
@@ -387,6 +506,48 @@ function projectReturn(stakeWolo: number, selectedPoolWolo: number, oppositePool
   return Math.max(
     stakeWolo,
     Math.round(stakeWolo + oppositePoolWolo * (stakeWolo / nextSelectedPool))
+  );
+}
+
+function safePlayerName(value: string | null | undefined, fallback: string) {
+  const trimmed = value?.trim();
+  return trimmed || fallback;
+}
+
+function sameBroadcastSource(
+  first: BroadcastFeed | null | undefined,
+  second: BroadcastFeed | null | undefined
+) {
+  if (!first || !second) return false;
+  const firstUrl = first.url.trim().toLowerCase();
+  const secondUrl = second.url.trim().toLowerCase();
+  return Boolean(firstUrl && firstUrl === secondUrl);
+}
+
+function splitMatchTitle(value: string | null | undefined) {
+  const title = value?.trim() || "";
+  const [left, ...rightParts] = title.split(/\s+vs\s+/i);
+  const right = rightParts.join(" vs ");
+
+  return {
+    leftName: safePlayerName(left, "Player 1"),
+    rightName: safePlayerName(right, "Player 2"),
+  };
+}
+
+
+function isPendingLivePlaceholderMarket(market: BetBoardMarket | null | undefined) {
+  if (!market) return false;
+
+  const label = market.eventLabel.toLowerCase();
+  const title = market.title.toLowerCase();
+  const rightName = market.right?.name?.toLowerCase?.() ?? "";
+
+  return (
+    label.includes("book pending") ||
+    label.includes("players parsing") ||
+    title === "live 4v4 detected" ||
+    rightName === "parsing"
   );
 }
 
@@ -502,15 +663,15 @@ async function resolveBetSigner(
 
 function statusPill(status: BetStatus) {
   if (status === "live") {
-    return "border-red-300/18 bg-[linear-gradient(135deg,rgba(127,29,29,0.58),rgba(185,28,28,0.20))] text-red-100";
+    return "border-emerald-300/22 bg-[linear-gradient(135deg,rgba(6,95,70,0.58),rgba(16,185,129,0.16))] text-emerald-50";
   }
   if (status === "closing") {
     return "border-amber-300/18 bg-[linear-gradient(135deg,rgba(146,64,14,0.50),rgba(217,119,6,0.16))] text-amber-50";
   }
   if (status === "settled") {
-    return "border-emerald-300/18 bg-[linear-gradient(135deg,rgba(6,95,70,0.50),rgba(16,185,129,0.14))] text-emerald-50";
+    return "border-sky-300/18 bg-[linear-gradient(135deg,rgba(14,116,144,0.42),rgba(14,165,233,0.12))] text-sky-50";
   }
-  return "border-sky-300/16 bg-[linear-gradient(135deg,rgba(30,64,175,0.34),rgba(59,130,246,0.12))] text-sky-100";
+  return "border-emerald-300/18 bg-[linear-gradient(135deg,rgba(6,95,70,0.42),rgba(16,185,129,0.13))] text-emerald-50";
 }
 
 function groupedSettlementLabel(
@@ -583,15 +744,15 @@ function edgeButton(kind: "gold" | "blue" | "glass") {
 }
 
 function shellClass() {
-  return "rounded-[1.9rem] border border-white/[0.06] bg-[radial-gradient(circle_at_top_left,rgba(96,165,250,0.08),transparent_26%),radial-gradient(circle_at_bottom_right,rgba(251,191,36,0.08),transparent_30%),linear-gradient(180deg,rgba(13,20,36,0.98),rgba(8,13,24,0.98))] shadow-[0_28px_80px_rgba(2,6,23,0.36)]";
+  return "min-w-0 w-full max-w-full rounded-[1.9rem] border border-white/[0.06] bg-[radial-gradient(circle_at_top_left,rgba(96,165,250,0.08),transparent_26%),radial-gradient(circle_at_bottom_right,rgba(251,191,36,0.08),transparent_30%),linear-gradient(180deg,rgba(13,20,36,0.98),rgba(8,13,24,0.98))] shadow-[0_28px_80px_rgba(2,6,23,0.36)]";
 }
 
 function insetClass() {
-  return "rounded-[1.55rem] border border-white/[0.06] bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.024))] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]";
+  return "min-w-0 max-w-full rounded-[1.55rem] border border-white/[0.06] bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.024))] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]";
 }
 
 function cardClass() {
-  return "rounded-[1.45rem] border border-white/[0.06] bg-[linear-gradient(180deg,rgba(255,255,255,0.038),rgba(255,255,255,0.02))] shadow-[0_18px_42px_rgba(2,6,23,0.22)]";
+  return "min-w-0 max-w-full rounded-[1.45rem] border border-white/[0.06] bg-[linear-gradient(180deg,rgba(255,255,255,0.038),rgba(255,255,255,0.02))] shadow-[0_18px_42px_rgba(2,6,23,0.22)]";
 }
 
 function CoinMark({ small = false }: { small?: boolean }) {
@@ -606,10 +767,47 @@ function CoinMark({ small = false }: { small?: boolean }) {
   );
 }
 
+function MarketStatusPill({ market }: { market: BetBoardMarket }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${statusPill(market.status)}`}>
+      {market.status === "live" ? (
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-35" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-red-400" />
+        </span>
+      ) : null}
+      <span>{market.status === "live" ? "Live" : market.closeLabel}</span>
+    </span>
+  );
+}
+
+function MarketTimingRail({ market, nowMs }: { market: BetBoardMarket; nowMs: number }) {
+  const timing = getMarketTiming(market, nowMs);
+  if (!timing) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+      <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1">
+        Start {timing.startLabel}
+      </span>
+      <span
+        className={`rounded-full border px-3 py-1 ${
+          timing.countdownLabel === "Live now"
+            ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-100"
+            : "border-white/10 bg-white/[0.04] text-slate-300"
+        }`}
+      >
+        {timing.countdownLabel}
+      </span>
+    </div>
+  );
+}
+
 export default function BetsPage() {
   const { isAdmin, isAuthenticated, loading, loginWithSteam, user } = useUserAuth();
   const { address: connectedWalletAddress, connect: connectKeplr } = useKeplr();
   const { data: rawWalletBalance } = useWoloBalance(connectedWalletAddress || undefined);
+  const nowMs = useNowTicker();
   const [board, setBoard] = useState<BetBoardSnapshot | null>(null);
   const [betsView, setBetsView] = useState<BetsViewMode>("basic");
   const [selection, setSelection] = useState<SelectionState | null>(null);
@@ -621,6 +819,32 @@ export default function BetsPage() {
   const [founderComposer, setFounderComposer] = useState<FounderComposerState | null>(null);
   const [savingFounderBonus, setSavingFounderBonus] = useState(false);
   const [founderBonusError, setFounderBonusError] = useState<string | null>(null);
+  const [broadcastVisible, setBroadcastVisible] = useState(true);
+  const [pendingStakeRecoveries, setPendingStakeRecoveries] = useState<PendingStakeRecovery[]>([]);
+
+  const syncPendingStakeRecoveries = useCallback(() => {
+    setPendingStakeRecoveries(readPendingStakeRecoveries());
+  }, []);
+
+  const savePendingStakeRecovery = useCallback(
+    (item: PendingStakeRecovery) => {
+      upsertPendingStakeRecovery(item);
+      syncPendingStakeRecoveries();
+    },
+    [syncPendingStakeRecoveries]
+  );
+
+  const clearPendingStakeRecovery = useCallback(
+    (intentId: number) => {
+      removePendingStakeRecovery(intentId);
+      syncPendingStakeRecoveries();
+    },
+    [syncPendingStakeRecoveries]
+  );
+
+  useEffect(() => {
+    syncPendingStakeRecoveries();
+  }, [syncPendingStakeRecoveries]);
 
   const loadBoard = useCallback(async (quiet = false) => {
     try {
@@ -901,6 +1125,26 @@ export default function BetsPage() {
   const recoverStakeIntent = useCallback(
     async (intentId: number, options?: { automatic?: boolean }) => {
       const recovery = readPendingStakeRecoveries().find((entry) => entry.intentId === intentId) || null;
+      const unresolvedIntent =
+        board?.recovery.unresolvedStakeIntents.find((entry) => entry.id === intentId) || null;
+      const hasStakeProof = Boolean(unresolvedIntent?.stakeTxHash || recovery?.stakeTxHash);
+      const canRecoverNow = Boolean(
+        unresolvedIntent &&
+          isRecoveryBookOpen(unresolvedIntent.marketStatus) &&
+          hasStakeProof
+      );
+
+      if (!canRecoverNow) {
+        if (!options?.automatic) {
+          toast.message(
+            unresolvedIntent && !isRecoveryBookOpen(unresolvedIntent.marketStatus)
+              ? "This signed stake belongs to a closed book. Keep the stake proof for manual review."
+              : "The recovery rail is still waiting on a usable stake proof."
+          );
+        }
+        return;
+      }
+
       setRecoveringIntentId(intentId);
 
       try {
@@ -926,7 +1170,7 @@ export default function BetsPage() {
           throw new Error(payload.detail || "Could not recover this signed stake.");
         }
 
-        removePendingStakeRecovery(intentId);
+        clearPendingStakeRecovery(intentId);
         await refreshBoard(payload);
         if (!options?.automatic) {
           toast.success("Recovered the signed WOLO stake into the book.");
@@ -941,7 +1185,7 @@ export default function BetsPage() {
         setRecoveringIntentId((current) => (current === intentId ? null : current));
       }
     },
-    [connectedWalletAddress, refreshBoard]
+    [board, clearPendingStakeRecovery, connectedWalletAddress, refreshBoard]
   );
 
   useEffect(() => {
@@ -952,6 +1196,7 @@ export default function BetsPage() {
     const unresolved = board.recovery.unresolvedStakeIntents.find((intent) => {
       if (attemptedAutoRecoverIds.includes(intent.id)) return false;
       const pending = readPendingStakeRecoveries().find((entry) => entry.intentId === intent.id);
+      if (!isRecoveryBookOpen(intent.marketStatus)) return false;
       if (pending?.stakeTxHash) return true;
       return (
         Boolean(intent.stakeTxHash) &&
@@ -1119,6 +1364,11 @@ export default function BetsPage() {
   }
 
   async function handleLock(market: BetBoardMarket) {
+    if (isPendingLivePlaceholderMarket(market)) {
+      toast.error("This live 4v4 is still parsing. Betting opens once teams are identified.");
+      return;
+    }
+
     if (!selection || selection.marketId !== market.id) return;
     if (!requireSignIn()) return;
     const stakeValidation = validateStakeAmount(selection.stake, maxStakeWolo);
@@ -1169,7 +1419,7 @@ export default function BetsPage() {
           routePath: "/bets",
           updatedAt: new Date().toISOString(),
         };
-        upsertPendingStakeRecovery(pendingRecovery);
+        savePendingStakeRecovery(pendingRecovery);
       }
 
       const stakeExecution = await lockStakeOnChain(market, selection.stake, preparedWallet);
@@ -1182,7 +1432,7 @@ export default function BetsPage() {
           walletType: stakeExecution.walletType,
           updatedAt: new Date().toISOString(),
         };
-        upsertPendingStakeRecovery(pendingRecovery);
+        savePendingStakeRecovery(pendingRecovery);
       }
 
       setLockWorkflow({
@@ -1217,7 +1467,7 @@ export default function BetsPage() {
       }
 
       if (intentId) {
-        removePendingStakeRecovery(intentId);
+        clearPendingStakeRecovery(intentId);
       }
       await refreshBoard(payload);
       setSelection(null);
@@ -1239,7 +1489,7 @@ export default function BetsPage() {
           status: pendingRecovery?.stakeTxHash ? "suspect" : "failed",
         });
         if (!pendingRecovery?.stakeTxHash) {
-          removePendingStakeRecovery(intentId);
+          clearPendingStakeRecovery(intentId);
         }
       }
       toast.error(error instanceof Error ? error.message : "Could not lock the wager.");
@@ -1283,10 +1533,67 @@ export default function BetsPage() {
   }
 
   const viewerName = board?.viewerName || user?.inGameName || user?.steamPersonaName || "Your book";
-  const pendingStakeRecoveries = readPendingStakeRecoveries();
+  const latestResult = recentResults[0] ?? null;
+  const broadcastSurface = useMemo(() => {
+    if (spotlightMarket) {
+      return {
+        key: `market-${spotlightMarket.id}`,
+        leftName: safePlayerName(spotlightMarket.left.name, "Player 1"),
+        rightName: safePlayerName(spotlightMarket.right.name, "Player 2"),
+        marketTitle: spotlightMarket.title,
+        eventLabel: spotlightMarket.eventLabel,
+        settled: false,
+        feeds: spotlightMarket.broadcastFeeds ?? EMPTY_BROADCAST_FEEDS,
+        previews: spotlightMarket.broadcastPreviewUrls ?? EMPTY_BROADCAST_PREVIEW_URLS,
+      };
+    }
+
+    if (latestResult) {
+      const resultPlayers = splitMatchTitle(latestResult.title);
+
+      return {
+        key: `result-${latestResult.id}`,
+        leftName: resultPlayers.leftName,
+        rightName: resultPlayers.rightName,
+        marketTitle: latestResult.title,
+        eventLabel: latestResult.eventLabel,
+        settled: true,
+        feeds: latestResult.broadcastFeeds ?? EMPTY_BROADCAST_FEEDS,
+        previews: latestResult.broadcastPreviewUrls ?? EMPTY_BROADCAST_PREVIEW_URLS,
+      };
+    }
+
+    return {
+      key: "broadcast-empty",
+      leftName: "Player 1",
+      rightName: "Player 2",
+      marketTitle: "Broadcast arming",
+      eventLabel: "Waiting for the next book",
+      settled: false,
+      feeds: EMPTY_BROADCAST_FEEDS,
+      previews: EMPTY_BROADCAST_PREVIEW_URLS,
+    };
+  }, [latestResult, spotlightMarket]);
+
+  useEffect(() => {
+    setBroadcastVisible(true);
+  }, [broadcastSurface.key]);
 
   return (
     <main className="space-y-5 overflow-x-hidden py-4 text-white sm:space-y-6 sm:py-5">
+      <BroadcastHeroTile
+        key={broadcastSurface.key}
+        leftName={broadcastSurface.leftName}
+        rightName={broadcastSurface.rightName}
+        marketTitle={broadcastSurface.marketTitle}
+        eventLabel={broadcastSurface.eventLabel}
+        settled={broadcastSurface.settled}
+        feeds={broadcastSurface.feeds}
+        previews={broadcastSurface.previews}
+        visible={broadcastVisible}
+        onToggle={() => setBroadcastVisible((current) => !current)}
+      />
+
       {betsView === "basic" ? (
         <>
           <section className="grid gap-5 xl:grid-cols-[0.84fr_1.16fr]">
@@ -1314,7 +1621,7 @@ export default function BetsPage() {
                 </h1>
               </div>
 
-              <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <div className="mt-5 grid grid-cols-2 gap-2 sm:mt-6 sm:gap-3">
                 <MiniMetric label="Open" value={String(openCount)} />
                 <MiniMetric label="In Play" value={String(liveCount)} />
                 <MiniMetric label="Book Pot" value={`${formatExactWolo(totalBookPot || 0)} WOLO`} />
@@ -1324,15 +1631,15 @@ export default function BetsPage() {
                 />
               </div>
 
-              <div className={`mt-5 ${insetClass()} px-4 py-4`}>
+              <div className={`mt-4 ${insetClass()} px-3 py-3 sm:mt-5 sm:px-4 sm:py-4`}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.32em] text-slate-500">Your Book</div>
-                    <div className="mt-2 text-lg font-semibold text-white">{viewerName}</div>
+                    <div className="mt-2 text-base font-semibold text-white sm:text-lg">{viewerName}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">If Right</div>
-                    <div className="mt-2 text-lg font-semibold text-white">
+                    <div className="mt-2 text-base font-semibold text-white sm:text-lg">
                       {isAuthenticated
                         ? `${formatCompact(board?.yourBook.projectedReturnWolo || 0)} WOLO`
                         : "Open"}
@@ -1371,6 +1678,7 @@ export default function BetsPage() {
                   selection={selection}
                   workingKey={workingKey}
                   lockWorkflow={lockWorkflow}
+                  nowMs={nowMs}
                   isAuthenticated={isAuthenticated}
                   isAdmin={isAdmin}
                   loadingAuth={loading}
@@ -1417,6 +1725,7 @@ export default function BetsPage() {
               selection={selection}
               workingKey={workingKey}
               lockWorkflow={lockWorkflow}
+              nowMs={nowMs}
               isAdmin={isAdmin}
               maxStakeWolo={maxStakeWolo}
               onSelect={handleSelect}
@@ -1510,7 +1819,7 @@ export default function BetsPage() {
                 </h1>
               </div>
 
-              <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <div className="mt-5 grid grid-cols-2 gap-2 sm:mt-6 sm:gap-3">
                 <MiniMetric label="Open" value={String(openCount)} />
                 <MiniMetric label="In Play" value={String(liveCount)} />
                 <MiniMetric label="Book Pot" value={`${formatExactWolo(totalBookPot || 0)} WOLO`} />
@@ -1520,15 +1829,15 @@ export default function BetsPage() {
                 />
               </div>
 
-              <div className={`mt-5 ${insetClass()} px-4 py-4`}>
+              <div className={`mt-4 ${insetClass()} px-3 py-3 sm:mt-5 sm:px-4 sm:py-4`}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.32em] text-slate-500">Your Book</div>
-                    <div className="mt-2 text-lg font-semibold text-white">{viewerName}</div>
+                    <div className="mt-2 text-base font-semibold text-white sm:text-lg">{viewerName}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">If Right</div>
-                    <div className="mt-2 text-lg font-semibold text-white">
+                    <div className="mt-2 text-base font-semibold text-white sm:text-lg">
                       {isAuthenticated
                         ? `${formatCompact(board?.yourBook.projectedReturnWolo || 0)} WOLO`
                         : "Open"}
@@ -1589,6 +1898,7 @@ export default function BetsPage() {
                   selection={selection}
                   workingKey={workingKey}
                   lockWorkflow={lockWorkflow}
+                  nowMs={nowMs}
                   isAuthenticated={isAuthenticated}
                   isAdmin={isAdmin}
                   loadingAuth={loading}
@@ -1618,6 +1928,7 @@ export default function BetsPage() {
               selection={selection}
               workingKey={workingKey}
               lockWorkflow={lockWorkflow}
+              nowMs={nowMs}
               isAdmin={isAdmin}
               maxStakeWolo={maxStakeWolo}
               onSelect={handleSelect}
@@ -1715,6 +2026,7 @@ function OpenBooksSection({
   selection,
   workingKey,
   lockWorkflow,
+  nowMs,
   isAdmin,
   maxStakeWolo,
   onSelect,
@@ -1734,6 +2046,7 @@ function OpenBooksSection({
   selection: SelectionState | null;
   workingKey: string | null;
   lockWorkflow: LockWorkflow | null;
+  nowMs: number;
   isAdmin: boolean;
   maxStakeWolo: number;
   onSelect: (market: BetBoardMarket, side: BetSide) => void;
@@ -1775,6 +2088,7 @@ function OpenBooksSection({
               selection={selection}
               workingKey={workingKey}
               lockWorkflow={lockWorkflow}
+              nowMs={nowMs}
               isAdmin={isAdmin}
               maxStakeWolo={maxStakeWolo}
               onSelect={onSelect}
@@ -1872,7 +2186,7 @@ function BoardPulseSection({
   return (
     <section className={`${shellClass()} p-5 sm:p-6`}>
       <div className="text-[11px] uppercase tracking-[0.35em] text-slate-500">Board Pulse</div>
-      <h2 className="mt-2 text-2xl font-semibold text-white">Enough telemetry to feel alive.</h2>
+      <h2 className="mt-2 text-2xl font-semibold text-white"></h2>
 
       <div className="mt-5 space-y-3">
         <HeatRow
@@ -1941,17 +2255,476 @@ function HeatSection({ board }: { board: BetBoardSnapshot | null }) {
 function RecentResultFeature({ result }: { result: BetSettledResult }) {
   return (
     <div>
-      <div className="text-[11px] uppercase tracking-[0.35em] text-slate-500">Latest Closed Book</div>
-      <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-white sm:text-4xl">
-        {result.title}
-      </h2>
-      <div className="mt-2 text-sm text-slate-400">
-        {result.winner} took {result.mapName} · {formatSettledTime(result.settledAt)}
+      <div className="min-w-0">
+        <div className="text-[11px] uppercase tracking-[0.35em] text-slate-500">Latest Closed Book</div>
+        <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-white sm:text-4xl">
+          {result.title}
+        </h2>
+        <div className="mt-2 text-sm text-slate-400">
+          {result.winner} took {result.mapName} · {formatSettledTime(result.settledAt)}
+        </div>
       </div>
 
       <div className="mt-5">
         <ResultCard result={result} basicLook founderChipVariant="micro" />
       </div>
+    </div>
+  );
+}
+
+function BroadcastVisibilityButton({
+  visible,
+  onToggle,
+}: {
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  const Icon = visible ? Monitor : MonitorOff;
+
+  return (
+    <button
+      type="button"
+      aria-pressed={visible}
+      aria-label={visible ? "Hide Broadcast" : "Show Broadcast"}
+      title={visible ? "Hide Broadcast" : "Show Broadcast"}
+      onClick={onToggle}
+      className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
+        visible
+          ? "bg-amber-300/12 text-amber-100 shadow-[0_0_24px_rgba(251,191,36,0.08)] hover:bg-amber-300/18"
+          : "bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]"
+      }`}
+    >
+      <Icon className="h-5 w-5" aria-hidden="true" />
+    </button>
+  );
+}
+
+function providerLabel(feed: BroadcastFeed | null | undefined) {
+  if (!feed) return "Placeholder";
+  if (feed.provider === "twitch") return "Twitch";
+  if (feed.provider === "youtube") return "YouTube";
+  if (feed.provider === "steam") return "Steam";
+  if (feed.provider === "discord") return "Discord";
+  return "External";
+}
+
+function buildBroadcastEmbedSrc(
+  feed: BroadcastFeed | null | undefined,
+  browserHost: string,
+  options: { compact?: boolean; autoplay?: boolean } = {}
+) {
+  if (!feed?.embedId || !feed.canEmbed) {
+    return null;
+  }
+
+  const compact = Boolean(options.compact);
+  const autoplay = Boolean(options.autoplay);
+
+  if (feed.provider === "twitch") {
+    const parent = encodeURIComponent(browserHost || "aoe2dewarwagers.com");
+    return `https://player.twitch.tv/?channel=${encodeURIComponent(
+      feed.embedId
+    )}&parent=${parent}&autoplay=${autoplay ? "true" : "false"}&muted=${
+      compact || autoplay ? "true" : "false"
+    }`;
+  }
+
+  if (feed.provider === "youtube") {
+    return `https://www.youtube.com/embed/${encodeURIComponent(
+      feed.embedId
+    )}?rel=0&modestbranding=1&autoplay=${autoplay ? "1" : "0"}`;
+  }
+
+  return null;
+}
+
+function BroadcastHeroTile({
+  leftName,
+  rightName,
+  marketTitle,
+  eventLabel,
+  settled = false,
+  feeds,
+  previews,
+  visible,
+  onToggle,
+}: {
+  leftName: string;
+  rightName: string;
+  marketTitle: string;
+  eventLabel: string;
+  settled?: boolean;
+  feeds: BroadcastFeeds;
+  previews: BroadcastPreviewUrls;
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  const [selectedView, setSelectedView] = useState<BroadcastViewKey>("god");
+  const [playingView, setPlayingView] = useState<BroadcastViewKey | null>(null);
+  const [browserHost, setBrowserHost] = useState("aoe2dewarwagers.com");
+  const leftPreviewUrl =
+    previews.left || (sameBroadcastSource(feeds.left, feeds.god) ? previews.god : null);
+  const rightPreviewUrl =
+    previews.right || (sameBroadcastSource(feeds.right, feeds.god) ? previews.god : null);
+  const views = useMemo(
+    () =>
+      [
+        {
+          key: "left" as const,
+          label: safePlayerName(leftName, "Player 1"),
+          eyebrow: "Player cam",
+          tone: "warm" as const,
+          feed: feeds.left,
+          previewUrl: leftPreviewUrl,
+        },
+        {
+          key: "god" as const,
+          label: "God View",
+          eyebrow: "Observer",
+          tone: "gold" as const,
+          feed: feeds.god,
+          previewUrl: previews.god,
+        },
+        {
+          key: "right" as const,
+          label: safePlayerName(rightName, "Player 2"),
+          eyebrow: "Player cam",
+          tone: "cool" as const,
+          feed: feeds.right,
+          previewUrl: rightPreviewUrl,
+        },
+      ],
+    [feeds, leftName, leftPreviewUrl, previews.god, rightName, rightPreviewUrl]
+  );
+  const activeView = views.find((view) => view.key === selectedView) || views[1];
+
+  useEffect(() => {
+    setBrowserHost(window.location.hostname || "aoe2dewarwagers.com");
+  }, []);
+
+  useEffect(() => {
+    setSelectedView("god");
+    setPlayingView(null);
+  }, [marketTitle, leftName, rightName]);
+
+  return (
+    <section
+      data-testid="broadcast-hero-tile"
+      className={`${shellClass()} overflow-hidden border-amber-200/10 bg-[radial-gradient(circle_at_14%_0%,rgba(251,191,36,0.14),transparent_30%),radial-gradient(circle_at_86%_14%,rgba(56,189,248,0.11),transparent_30%),linear-gradient(180deg,rgba(15,23,42,0.82),rgba(2,6,23,0.48))] p-4 sm:p-5 lg:p-6`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-[0.32em] text-amber-100/70">
+            Broadcast
+          </div>
+          <h2 className="mt-2 truncate text-2xl font-semibold tracking-[-0.04em] text-white sm:text-3xl lg:text-4xl">
+            {activeView.label}
+          </h2>
+          <div className="mt-2 text-sm text-slate-400">
+            {activeView.feed
+              ? `${providerLabel(activeView.feed)} feed`
+              : settled
+                ? "Replay camera placeholder"
+                : "Live camera placeholder"} · {eventLabel}
+          </div>
+        </div>
+
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="max-w-[14rem] truncate rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-slate-300 sm:max-w-[22rem]">
+            {marketTitle}
+          </span>
+          <BroadcastVisibilityButton visible={visible} onToggle={onToggle} />
+        </div>
+      </div>
+
+      {visible ? (
+        <>
+          <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
+            {views.map((view) => (
+              <BroadcastPreviewButton
+                key={view.key}
+                label={view.label}
+                eyebrow={view.eyebrow}
+                tone={view.tone}
+                feed={view.feed}
+                previewUrl={view.previewUrl}
+                selected={selectedView === view.key}
+                onSelect={() => {
+                  setSelectedView(view.key);
+                  setPlayingView(null);
+                }}
+              />
+            ))}
+          </div>
+
+          <BroadcastPlaceholderFrame
+            label={activeView.label}
+            eyebrow={activeView.eyebrow}
+            tone={activeView.tone}
+            feed={activeView.feed}
+            previewUrl={activeView.previewUrl}
+            browserHost={browserHost}
+            marketTitle={marketTitle}
+            isPlaying={playingView === activeView.key}
+            onPlay={() => setPlayingView(activeView.key)}
+          />
+        </>
+      ) : (
+        <div className={`${insetClass()} mt-4 px-4 py-5 text-sm text-slate-300`}>
+          Broadcast hidden.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BroadcastPreviewButton({
+  label,
+  eyebrow,
+  tone,
+  feed,
+  previewUrl,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  eyebrow: string;
+  tone: "warm" | "gold" | "cool";
+  feed: BroadcastFeed | null;
+  previewUrl: string | null;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={`group min-w-0 overflow-hidden rounded-[1.05rem] border p-1.5 text-left transition sm:rounded-[1.2rem] sm:p-2 ${
+        selected
+          ? "border-amber-100/45 bg-amber-300/10 shadow-[0_0_30px_rgba(251,191,36,0.10)]"
+          : "border-white/[0.06] bg-white/[0.035] hover:border-white/14 hover:bg-white/[0.055]"
+      }`}
+    >
+      <div className="aspect-video overflow-hidden rounded-[0.85rem] border border-white/[0.06] bg-slate-950/80 sm:rounded-[0.95rem]">
+        <BroadcastSignalSurface
+          tone={tone}
+          feed={feed}
+          previewUrl={previewUrl}
+          compact
+        />
+      </div>
+      <div className="mt-2 min-w-0">
+        <div className="truncate text-[9px] uppercase tracking-[0.18em] text-slate-500 sm:text-[10px] sm:tracking-[0.22em]">
+          {feed ? providerLabel(feed) : eyebrow}
+        </div>
+        <div className="mt-1 truncate text-xs font-semibold text-white sm:text-sm">{label}</div>
+      </div>
+    </button>
+  );
+}
+
+function BroadcastPlaceholderFrame({
+  label,
+  eyebrow,
+  tone,
+  feed,
+  previewUrl,
+  browserHost,
+  marketTitle,
+  isPlaying,
+  onPlay,
+}: {
+  label: string;
+  eyebrow: string;
+  tone: "warm" | "gold" | "cool";
+  feed: BroadcastFeed | null;
+  previewUrl: string | null;
+  browserHost: string;
+  marketTitle: string;
+  isPlaying: boolean;
+  onPlay: () => void;
+}) {
+  return (
+    <div className="mt-4 overflow-hidden rounded-[1.45rem] border border-white/[0.08] bg-slate-950/78 p-2.5 sm:p-3">
+      <div className="aspect-video min-h-[12rem] overflow-hidden rounded-[1.2rem] border border-white/[0.06] bg-black/55 sm:min-h-[15rem]">
+        <BroadcastSignalSurface
+          tone={tone}
+          feed={feed}
+          previewUrl={previewUrl}
+          browserHost={browserHost}
+          isPlaying={isPlaying}
+          onPlay={onPlay}
+        />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 px-1">
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-[0.26em] text-slate-500">
+            {feed ? providerLabel(feed) : eyebrow}
+          </div>
+          <div className="mt-1 truncate text-lg font-semibold text-white sm:text-xl">{label}</div>
+        </div>
+        {feed ? (
+          <a
+            href={feed.url}
+            target="_blank"
+            rel="noreferrer"
+            className="min-w-0 max-w-full overflow-hidden flex items-center gap-2 rounded-full border border-emerald-200/12 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-100 transition hover:bg-emerald-400/16 sm:max-w-[24rem]"
+          >
+            <Play className="h-3.5 w-3.5 text-emerald-100" aria-hidden="true" />
+            <span className="truncate">{providerLabel(feed)} feed · {feed.label}</span>
+          </a>
+        ) : (
+          <div className="min-w-0 max-w-full overflow-hidden flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300 sm:max-w-[24rem]">
+            <Play className="h-3.5 w-3.5 text-amber-100" aria-hidden="true" />
+            <span className="truncate">Placeholder feed · {marketTitle}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BroadcastSignalSurface({
+  tone,
+  feed,
+  previewUrl,
+  browserHost,
+  compact = false,
+  isPlaying = false,
+  onPlay,
+}: {
+  tone: "warm" | "gold" | "cool";
+  feed?: BroadcastFeed | null;
+  previewUrl?: string | null;
+  browserHost?: string;
+  compact?: boolean;
+  isPlaying?: boolean;
+  onPlay?: () => void;
+}) {
+  const [loopReady, setLoopReady] = useState(false);
+  const [loopFailed, setLoopFailed] = useState(false);
+  const embedSrc = isPlaying
+    ? buildBroadcastEmbedSrc(feed, browserHost || "aoe2dewarwagers.com", {
+        compact,
+        autoplay: true,
+      })
+    : null;
+  const hasLoop = Boolean(previewUrl) && !isPlaying && !loopFailed;
+  const hasEmbeddableFeed = Boolean(feed?.canEmbed && feed.embedId);
+  const hasExternalFeed = Boolean(feed && !hasEmbeddableFeed);
+  const glowClassName =
+    tone === "warm"
+      ? "from-amber-300/24 via-orange-500/12 to-transparent"
+      : tone === "cool"
+        ? "from-sky-300/22 via-cyan-500/12 to-transparent"
+        : "from-emerald-300/20 via-amber-300/12 to-transparent";
+
+  useEffect(() => {
+    setLoopReady(false);
+    setLoopFailed(false);
+  }, [previewUrl, isPlaying]);
+
+  return (
+    <div className="relative isolate flex h-full min-h-full items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_34%_28%,rgba(56,189,248,0.18),transparent_32%),radial-gradient(circle_at_72%_42%,rgba(251,191,36,0.13),transparent_30%),linear-gradient(135deg,#020617,#050816_48%,#0f172a)]">
+      {hasLoop ? (
+        <video
+          key={previewUrl}
+          className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-500 ${
+            loopReady ? "opacity-100" : "opacity-0"
+          }`}
+          src={previewUrl || undefined}
+          muted
+          autoPlay
+          loop
+          playsInline
+          preload={compact ? "metadata" : "auto"}
+          onLoadedData={() => {
+            setLoopReady(true);
+            setLoopFailed(false);
+          }}
+          onCanPlay={() => {
+            setLoopReady(true);
+            setLoopFailed(false);
+          }}
+          onError={() => {
+            setLoopReady(false);
+            setLoopFailed(true);
+          }}
+        />
+      ) : null}
+
+      {embedSrc ? (
+        <iframe
+          src={embedSrc}
+          title={feed?.label || "Broadcast feed"}
+          className={`absolute inset-0 z-20 h-full w-full border-0 ${
+            compact ? "pointer-events-none" : ""
+          }`}
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
+        />
+      ) : null}
+
+      {!embedSrc ? (
+        <>
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,rgba(255,255,255,0.055),transparent_36%,rgba(255,255,255,0.035))]" />
+          <div
+            className={`pointer-events-none absolute inset-x-[-15%] top-[-30%] h-[76%] rounded-full bg-gradient-to-b ${glowClassName} blur-3xl`}
+          />
+          <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(0deg,rgba(255,255,255,0.035)_0px,rgba(255,255,255,0.035)_1px,transparent_1px,transparent_12px)] opacity-50" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/78 via-black/10 to-black/24" />
+        </>
+      ) : null}
+
+      <div className="pointer-events-none absolute left-3 top-3 z-30 flex items-center gap-2 sm:left-4 sm:top-4">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-30" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-red-400" />
+        </span>
+        {compact ? null : (
+          <span className="text-[9px] uppercase tracking-[0.18em] text-white/52 sm:text-[10px] sm:tracking-[0.22em]">
+            {feed ? `${providerLabel(feed)} feed` : "No stream wired"}
+          </span>
+        )}
+      </div>
+
+      {!embedSrc && !compact && hasEmbeddableFeed ? (
+        <button
+          type="button"
+          onClick={onPlay}
+          className="absolute left-1/2 top-1/2 z-40 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/25 bg-black/45 text-white shadow-2xl backdrop-blur-md transition duration-200 hover:scale-105 hover:bg-black/65 focus:outline-none focus:ring-2 focus:ring-sky-300"
+          aria-label={`Play ${feed?.label || "Broadcast feed"}`}
+        >
+          <span className="ml-1 block h-0 w-0 border-y-[16px] border-l-[25px] border-y-transparent border-l-white" />
+        </button>
+      ) : null}
+
+      {!embedSrc && !compact && hasExternalFeed ? (
+        <a
+          href={feed?.url}
+          target="_blank"
+          rel="noreferrer"
+          className="absolute left-1/2 top-1/2 z-40 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/25 bg-black/45 text-white shadow-2xl backdrop-blur-md transition duration-200 hover:scale-105 hover:bg-black/65 focus:outline-none focus:ring-2 focus:ring-sky-300"
+          aria-label={`Open ${feed?.label || "Broadcast feed"}`}
+        >
+          <span className="ml-1 block h-0 w-0 border-y-[16px] border-l-[25px] border-y-transparent border-l-white" />
+        </a>
+      ) : null}
+
+      {!embedSrc && (!hasLoop || !loopReady) ? (
+        <div className="relative z-10 flex flex-col items-center gap-3 text-white/70">
+          <Monitor
+            className={`${compact ? "h-7 w-7 sm:h-8 sm:w-8" : "h-14 w-14"} text-white/70`}
+            aria-hidden="true"
+          />
+          {feed && !compact && !hasEmbeddableFeed ? (
+            <div className="rounded-full border border-white/10 bg-black/30 px-3 py-1 text-xs text-white/70">
+              External feed saved
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1971,24 +2744,24 @@ function StakeAmountRail({
   const stakeError =
     activeSelection ? validateStakeAmount(activeSelection.stake, maxStakeWolo) : null;
 
-const hasActiveSelection = Boolean(activeSelection);
+  const hasActiveSelection = Boolean(activeSelection);
 
-useEffect(() => {
-  if (!hasActiveSelection) {
+  useEffect(() => {
+    if (!hasActiveSelection) {
+      setCustomDraft("");
+      return;
+    }
+
+    // New side / new market selection should feel clean.
+    // Keep the suggested stake highlighted via the pills,
+    // but do not jam it into the custom input automatically.
     setCustomDraft("");
-    return;
-  }
-
-  // New side / new market selection should feel clean.
-  // Keep the suggested stake highlighted via the pills,
-  // but do not jam it into the custom input automatically.
-  setCustomDraft("");
-}, [hasActiveSelection, activeSelection?.marketId, activeSelection?.side]);
+  }, [hasActiveSelection, activeSelection?.marketId, activeSelection?.side]);
 
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {STAKE_OPTIONS.map((stake) => (
             <button
               key={stake}
@@ -2006,10 +2779,12 @@ useEffect(() => {
               {stake}
             </button>
           ))}
+          <span className="inline-flex items-center rounded-full border border-white/[0.08] bg-white/[0.035] px-3 py-1.5 text-[11px] uppercase tracking-[0.22em] text-slate-400">
+            Custom
+          </span>
         </div>
 
-        <label className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-2">
-          <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Custom</span>
+        <label className="flex min-w-[11rem] items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-2 transition focus-within:border-amber-200/30 focus-within:bg-white/[0.065]">
           <input
             inputMode="numeric"
             pattern="[0-9]*"
@@ -2021,8 +2796,8 @@ useEffect(() => {
               onStakeChange(digits ? Number.parseInt(digits, 10) : 0);
             }}
             disabled={!activeSelection || !canEdit}
-            className="w-20 bg-transparent text-right text-sm text-white outline-none placeholder:text-slate-500 disabled:cursor-not-allowed"
-            placeholder="Enter"
+            className="min-w-0 flex-1 bg-transparent text-right text-sm text-white outline-none placeholder:text-slate-500 disabled:cursor-not-allowed"
+            placeholder="Amount"
           />
           <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">WOLO</span>
         </label>
@@ -2044,6 +2819,7 @@ function MarketFeature({
   selection,
   workingKey,
   lockWorkflow,
+  nowMs,
   isAuthenticated,
   isAdmin,
   loadingAuth,
@@ -2060,6 +2836,7 @@ function MarketFeature({
   selection: SelectionState | null;
   workingKey: string | null;
   lockWorkflow: LockWorkflow | null;
+  nowMs: number;
   isAuthenticated: boolean;
   isAdmin: boolean;
   loadingAuth: boolean;
@@ -2146,6 +2923,7 @@ function MarketFeature({
             bonuses={market.founderBonuses}
             variant={detailMode === "basic" ? "micro" : "full"}
           />
+          <MarketTimingRail market={market} nowMs={nowMs} />
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {market.href ? (
@@ -2174,9 +2952,7 @@ function MarketFeature({
               </button>
             </>
           ) : null}
-          <span className={`rounded-full border px-3 py-1 text-xs ${statusPill(market.status)}`}>
-            {market.closeLabel}
-          </span>
+          <MarketStatusPill market={market} />
         </div>
       </div>
 
@@ -2272,6 +3048,7 @@ function MarketCard({
   selection,
   workingKey,
   lockWorkflow,
+  nowMs,
   isAdmin,
   maxStakeWolo,
   onSelect,
@@ -2286,6 +3063,7 @@ function MarketCard({
   selection: SelectionState | null;
   workingKey: string | null;
   lockWorkflow: LockWorkflow | null;
+  nowMs: number;
   isAdmin: boolean;
   maxStakeWolo: number;
   onSelect: (market: BetBoardMarket, side: BetSide) => void;
@@ -2358,11 +3136,10 @@ function MarketCard({
             compact
             variant={detailMode === "basic" ? "micro" : "full"}
           />
+          <MarketTimingRail market={market} nowMs={nowMs} />
         </div>
         <div className="flex flex-col items-end gap-2">
-          <span className={`rounded-full border px-3 py-1 text-xs ${statusPill(market.status)}`}>
-            {market.closeLabel}
-          </span>
+          <MarketStatusPill market={market} />
           {market.href ? (
             <Link
               href={market.href}
@@ -2555,9 +3332,13 @@ function SideMiniChoice({
 
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className={`${cardClass()} px-4 py-4`}>
-      <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">{label}</div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight text-white">{value}</div>
+    <div className={`${cardClass()} px-3 py-3 sm:px-4 sm:py-4`}>
+      <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500 sm:text-[11px] sm:tracking-[0.28em]">
+        {label}
+      </div>
+      <div className="mt-2 text-lg font-semibold leading-tight tracking-tight text-white break-words sm:text-2xl">
+        {value}
+      </div>
     </div>
   );
 }

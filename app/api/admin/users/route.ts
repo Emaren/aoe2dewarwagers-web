@@ -8,11 +8,17 @@ import {
   loadAppearancePreferenceMap,
   loadRecentActivityMap,
 } from "@/lib/userExperience";
+import { getTileViewMode } from "@/lib/tileViewPreferences";
 import { loadPendingWoloClaimsForAdmin, normalizePendingWoloClaimName } from "@/lib/pendingWoloClaims";
 import {
   isBetStakeIntentCountableStatus,
   refreshRecoverableBetStakeIntents,
 } from "@/lib/betStakeIntents";
+import { buildChallengeEconomySurface } from "@/lib/challengeEconomy";
+import {
+  SCHEDULED_MATCH_COLOR_TAGS,
+  normalizeScheduledMatchColorTag,
+} from "@/lib/scheduledMatchPreferences";
 import { loadWatcherDownloadAnalytics } from "@/lib/watcherDownloads";
 import { getWoloSettlementSurfaceStatus } from "@/lib/woloBetSettlement";
 import { buildWoloRestTxLookupUrl, getWoloBetEscrowRuntime } from "@/lib/woloChain";
@@ -220,7 +226,21 @@ export async function GET(request: NextRequest) {
 
     await refreshRecoverableBetStakeIntents(prisma);
 
-    const [communityMap, inbox, appearanceMap, activityMap, adminMemberships, activityStats, allClaims, scheduledRows, wagerRows, marketRows, settlementSurface, watcherDownloads] = await Promise.all([
+    const [
+      communityMap,
+      inbox,
+      appearanceMap,
+      activityMap,
+      adminMemberships,
+      activityStats,
+      allClaims,
+      scheduledRows,
+      scheduledPreferenceRows,
+      wagerRows,
+      marketRows,
+      settlementSurface,
+      watcherDownloads,
+    ] = await Promise.all([
       loadUserCommunitySummaries(prisma, userIds, { includePending: true }),
       loadInboxPayload(prisma, admin.uid, { summaryOnly: true }),
       loadAppearancePreferenceMap(prisma, userIds),
@@ -270,6 +290,20 @@ export async function GET(request: NextRequest) {
           status: true,
           scheduledAt: true,
           updatedAt: true,
+          acceptedAt: true,
+          resultAt: true,
+          settlementReadyAt: true,
+          wagerAmountWolo: true,
+          guaranteeAmountWolo: true,
+          challengerFundedAt: true,
+          challengerFundingTxHash: true,
+          challengerFundingWalletAddress: true,
+          challengedFundedAt: true,
+          challengedFundingTxHash: true,
+          challengedFundingWalletAddress: true,
+          challengerCheckedInAt: true,
+          challengedCheckedInAt: true,
+          liveConfirmedAt: true,
           linkedMapName: true,
           linkedWinner: true,
           challengerUserId: true,
@@ -288,6 +322,19 @@ export async function GET(request: NextRequest) {
               steamPersonaName: true,
             },
           },
+        },
+      }),
+      prisma.scheduledMatchUserPreference.findMany({
+        where: {
+          userId: { in: userIds },
+        },
+        select: {
+          userId: true,
+          scheduledMatchId: true,
+          favorite: true,
+          bookmarked: true,
+          colorTag: true,
+          updatedAt: true,
         },
       }),
       prisma.betWager.findMany({
@@ -494,51 +541,186 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const buildColorTagCounts = () =>
+      Object.fromEntries(SCHEDULED_MATCH_COLOR_TAGS.map((tag) => [tag, 0])) as Record<
+        (typeof SCHEDULED_MATCH_COLOR_TAGS)[number],
+        number
+      >;
+
+    const scheduledPreferenceByUserAndMatch = new Map<
+      string,
+      {
+        favorite: boolean;
+        bookmarked: boolean;
+        colorTag: (typeof SCHEDULED_MATCH_COLOR_TAGS)[number] | null;
+        updatedAt: string;
+      }
+    >();
+    const scheduledPreferenceStatsByUserId = new Map<
+      number,
+      {
+        favoriteCount: number;
+        bookmarkedCount: number;
+        colorTagCounts: Record<(typeof SCHEDULED_MATCH_COLOR_TAGS)[number], number>;
+        latestUpdatedAt: string | null;
+      }
+    >();
+    const scheduledPreferenceUserIds = new Set<number>();
+    const scheduledPreferenceUsage = {
+      favoriteCount: 0,
+      bookmarkedCount: 0,
+      usersWithPreferences: 0,
+      colorTagCounts: buildColorTagCounts(),
+    };
+
+    for (const row of scheduledPreferenceRows) {
+      const colorTag = normalizeScheduledMatchColorTag(row.colorTag);
+      const updatedAt = row.updatedAt.toISOString();
+      scheduledPreferenceByUserAndMatch.set(`${row.userId}:${row.scheduledMatchId}`, {
+        favorite: row.favorite,
+        bookmarked: row.bookmarked,
+        colorTag,
+        updatedAt,
+      });
+
+      const stats = scheduledPreferenceStatsByUserId.get(row.userId) ?? {
+        favoriteCount: 0,
+        bookmarkedCount: 0,
+        colorTagCounts: buildColorTagCounts(),
+        latestUpdatedAt: null,
+      };
+
+      if (row.favorite) {
+        stats.favoriteCount += 1;
+        scheduledPreferenceUsage.favoriteCount += 1;
+      }
+      if (row.bookmarked) {
+        stats.bookmarkedCount += 1;
+        scheduledPreferenceUsage.bookmarkedCount += 1;
+      }
+      if (colorTag) {
+        stats.colorTagCounts[colorTag] += 1;
+        scheduledPreferenceUsage.colorTagCounts[colorTag] += 1;
+      }
+      if (!stats.latestUpdatedAt || updatedAt > stats.latestUpdatedAt) {
+        stats.latestUpdatedAt = updatedAt;
+      }
+      scheduledPreferenceStatsByUserId.set(row.userId, stats);
+      scheduledPreferenceUserIds.add(row.userId);
+    }
+    scheduledPreferenceUsage.usersWithPreferences = scheduledPreferenceUserIds.size;
+
+    const preferenceFor = (userId: number, matchId: number) =>
+      scheduledPreferenceByUserAndMatch.get(`${userId}:${matchId}`) ?? {
+        favorite: false,
+        bookmarked: false,
+        colorTag: null,
+      };
+
     const scheduledByUserId = new Map<number, Array<{
       id: number;
       status: string;
+      displayState: string;
       role: "challenger" | "challenged";
       opponentName: string;
       opponentUid: string;
       scheduledAt: string;
       activityAt: string;
+      wagerAmountWolo: number;
+      guaranteeAmountWolo: number;
+      totalFundingWolo: number;
+      fundingState: string;
+      checkInState: string;
+      resolutionLabel: string | null;
       linkedMapName: string | null;
       linkedWinner: string | null;
+      personalFavorite: boolean;
+      personalBookmarked: boolean;
+      personalColorTag: (typeof SCHEDULED_MATCH_COLOR_TAGS)[number] | null;
     }>>();
 
     for (const row of scheduledRows) {
       const challengerName = row.challenger.inGameName || row.challenger.steamPersonaName || row.challenger.uid;
       const challengedName = row.challenged.inGameName || row.challenged.steamPersonaName || row.challenged.uid;
       const activityAt = row.updatedAt.toISOString();
+      const surface = buildChallengeEconomySurface({
+        status: row.status,
+        scheduledAt: row.scheduledAt,
+        acceptedAt: row.acceptedAt,
+        resultAt: row.resultAt,
+        liveConfirmedAt: row.liveConfirmedAt,
+        settlementReadyAt: row.settlementReadyAt,
+        wagerAmountWolo: row.wagerAmountWolo,
+        guaranteeAmountWolo: row.guaranteeAmountWolo,
+        challengerFundedAt: row.challengerFundedAt,
+        challengerFundingTxHash: row.challengerFundingTxHash,
+        challengerFundingWalletAddress: row.challengerFundingWalletAddress,
+        challengedFundedAt: row.challengedFundedAt,
+        challengedFundingTxHash: row.challengedFundingTxHash,
+        challengedFundingWalletAddress: row.challengedFundingWalletAddress,
+        challengerCheckedInAt: row.challengerCheckedInAt,
+        challengedCheckedInAt: row.challengedCheckedInAt,
+      });
+      const totalFundingWolo = row.wagerAmountWolo + row.guaranteeAmountWolo;
+      const checkInState =
+        surface.economy.checkInWindowState === "open"
+          ? "open"
+          : surface.economy.checkInWindowState === "upcoming"
+            ? "pending"
+            : surface.economy.checkInWindowState === "closed"
+              ? "closed"
+              : "locked after funding";
 
       const challengerList = scheduledByUserId.get(row.challengerUserId) ?? [];
+      const challengerPreference = preferenceFor(row.challengerUserId, row.id);
       if (challengerList.length < 8) {
         challengerList.push({
           id: row.id,
           status: row.status,
+          displayState: surface.displayState,
           role: "challenger",
           opponentName: challengedName,
           opponentUid: row.challenged.uid,
           scheduledAt: row.scheduledAt.toISOString(),
           activityAt,
+          wagerAmountWolo: row.wagerAmountWolo,
+          guaranteeAmountWolo: row.guaranteeAmountWolo,
+          totalFundingWolo,
+          fundingState: surface.economy.statusLabel,
+          checkInState,
+          resolutionLabel: surface.economy.resolution.label,
           linkedMapName: row.linkedMapName ?? null,
           linkedWinner: row.linkedWinner ?? null,
+          personalFavorite: challengerPreference.favorite,
+          personalBookmarked: challengerPreference.bookmarked,
+          personalColorTag: challengerPreference.colorTag,
         });
         scheduledByUserId.set(row.challengerUserId, challengerList);
       }
 
       const challengedList = scheduledByUserId.get(row.challengedUserId) ?? [];
+      const challengedPreference = preferenceFor(row.challengedUserId, row.id);
       if (challengedList.length < 8) {
         challengedList.push({
           id: row.id,
           status: row.status,
+          displayState: surface.displayState,
           role: "challenged",
           opponentName: challengerName,
           opponentUid: row.challenger.uid,
           scheduledAt: row.scheduledAt.toISOString(),
           activityAt,
+          wagerAmountWolo: row.wagerAmountWolo,
+          guaranteeAmountWolo: row.guaranteeAmountWolo,
+          totalFundingWolo,
+          fundingState: surface.economy.statusLabel,
+          checkInState,
+          resolutionLabel: surface.economy.resolution.label,
           linkedMapName: row.linkedMapName ?? null,
           linkedWinner: row.linkedWinner ?? null,
+          personalFavorite: challengedPreference.favorite,
+          personalBookmarked: challengedPreference.bookmarked,
+          personalColorTag: challengedPreference.colorTag,
         });
         scheduledByUserId.set(row.challengedUserId, challengedList);
       }
@@ -648,6 +830,12 @@ export async function GET(request: NextRequest) {
         const claimedClaims = claimedClaimsByUserId.get(entry.id) ?? [];
         const rescindedClaims = rescindedClaimsByUserId.get(entry.id) ?? [];
         const scheduledMatches = scheduledByUserId.get(entry.id) ?? [];
+        const scheduledMatchPreferenceStats = scheduledPreferenceStatsByUserId.get(entry.id) ?? {
+          favoriteCount: 0,
+          bookmarkedCount: 0,
+          colorTagCounts: buildColorTagCounts(),
+          latestUpdatedAt: null,
+        };
         const wagers = wagersByUserId.get(entry.id) ?? [];
         const betStats = betStatsByUserId.get(entry.id) ?? {
           activeCount: 0,
@@ -690,6 +878,7 @@ export async function GET(request: NextRequest) {
           claimedWoloClaimAmount: claimedClaims.reduce((sum, claim) => sum + claim.amountWolo, 0),
           rescindedWoloClaims: rescindedClaims.slice(0, 8),
           scheduledMatches,
+          scheduledMatchPreferenceStats,
           betLedger: wagers,
           betStats,
         };
@@ -1008,6 +1197,13 @@ export async function GET(request: NextRequest) {
       rows: marketRailRows,
     };
 
+    const communityLobbyBasicCount = userRows.filter(
+      (user) => getTileViewMode(user.appearance?.tileViewPreferences, "community_lobby") === "basic"
+    ).length;
+    const communityLobbyAdvancedCount = userRows.length - communityLobbyBasicCount;
+    const communityLobbyAdvancedPercent =
+      userRows.length > 0 ? Math.round((communityLobbyAdvancedCount / userRows.length) * 100) : 0;
+
     const overview = {
       totalUsers: userRows.length,
       activeUsers24h: userRows.filter((user) => {
@@ -1035,6 +1231,19 @@ export async function GET(request: NextRequest) {
         viewMode,
         count: userRows.filter((user) => user.appearance?.viewMode === viewMode).length,
       })),
+      tileViewBreakdown: [
+        {
+          tileKey: "community_lobby",
+          label: "Community Lobby",
+          basicCount: communityLobbyBasicCount,
+          advancedCount: communityLobbyAdvancedCount,
+          basicPercent: Math.max(0, 100 - communityLobbyAdvancedPercent),
+          advancedPercent: communityLobbyAdvancedPercent,
+          preferredMode:
+            communityLobbyAdvancedCount > communityLobbyBasicCount ? "advanced" : "basic",
+        },
+      ],
+      scheduledPreferenceUsage,
     };
 
     return NextResponse.json({

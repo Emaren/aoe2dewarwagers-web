@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`app-prodn` is the public product shell for AoE2HDBets.
+`app-prodn` is the public product shell for AoE2DEWarWagers.
 
 It owns:
 - community lobby and homepage presentation
@@ -25,9 +25,9 @@ It does not own:
 - framework: Next.js App Router
 - local dev entrypoint: `npm run dev`
 - production start command: `npm run start`
-- production bind: `127.0.0.1:3030`
-- production service: `aoe2hdbets-web.service`
-- server repo path on VPS: `/var/www/AoE2HDBets/app-prodn`
+- production bind: `127.0.0.1:4000`
+- production service: `aoe2dewarwagers-web.service`
+- server repo path on VPS: `/mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn`
 
 ## Major layers
 
@@ -100,7 +100,11 @@ Challenge and bet settlement now have a real happy path:
 - `/bets` records an `onchain_escrow` wager only after the signed stake tx verifies against WOLO REST
 - winning payouts can execute through `WOLO_SETTLEMENT_URL` or the configured fallback signer when the winner has a trusted identity and linked wallet
 
-This repo still does not own chain truth. AoE2HDBets owns market seeding, user-facing lock/settle UX, and claim fallback rails. WoloChain still owns transfer semantics, chain identity, and final settlement execution truth.
+The `/staking` page is an app-side WOLO staking ledger, not native Cosmos validator staking. Stake actions are user-signed Keplr transfers into the configured staking wallet. Unstake actions are WoloChain settlement payouts back to the user wallet. User principal stays separate from the staking wallet's operator-funded reserve: max unstake follows confirmed stake, while the API checks that post-unstake wallet balance can still cover remaining confirmed stake plus reserve.
+
+`lib/aiConcierge.ts` feeds The AI Scribe and Grimer the same live app-side staking context used by `/staking`: 24h/7d fee summaries, staker and earner boards, viewer position/reward state, and recent staking activity. AI replies must treat this as AoE2DEWarWagers custody/reward UX, not validator staking, and must not invent APY, reward rates, or WoloChain facts that are not supplied by context.
+
+This repo still does not own chain truth. AoE2DEWarWagers owns market seeding, user-facing lock/settle UX, and claim fallback rails. WoloChain still owns transfer semantics, chain identity, and final settlement execution truth.
 
 ### Presentation system
 
@@ -198,12 +202,12 @@ This is product state, not just decoration, because the current lobby identity d
 - Postgres through Prisma
 - `api-prodn` through `AOE2_BACKEND_UPSTREAM`
 - nginx for public routing
-- `aoe2hdbets-web.service` for runtime
+- `aoe2dewarwagers-web.service` for runtime
 - `rpc.aoe2hdbets.com` / `rest.aoe2hdbets.com` for browser wallet reads and stake verification
 - WoloChain settlement execution through `WOLO_SETTLEMENT_URL`
 
 Canonical VPS truth:
-- web env file: `/etc/aoe2hdbets/aoe2hdbets-web.env`
+- web env file: `/etc/aoe2dewarwagers/aoe2dewarwagers-web.env`
 - web build output must exist at `.next/BUILD_ID`
 
 ## Current ownership boundaries

@@ -83,7 +83,8 @@ export default function DownloadPage() {
             </h1>
 
             <p className="mt-5 max-w-3xl text-sm leading-7 text-slate-300 sm:text-[15px]">
-              Import old replays, watch new ones, and keep your AoE2DE results landing from the saved game folder.
+              Import old replays, watch new ones, and keep your AoE2DE results landing without
+              babysitting the game folder.
             </p>
 
             <div className="mt-5 flex flex-wrap gap-2">
@@ -122,8 +123,7 @@ export default function DownloadPage() {
             </div>
 
             <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-300/5 px-4 py-3 text-xs leading-6 text-amber-50/85">
-              Unsigned for now. If Windows blocks the installer, use Portable. If Mac blocks
-              launch, use the ZIP or clear quarantine once.
+              Windows builds are Microsoft-signed. Mac/Linux may still show platform trust prompts during beta.
             </div>
           </div>
 
@@ -139,7 +139,7 @@ export default function DownloadPage() {
 
               <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] p-2">
                 <Image
-                  src="/watcher/AoE2DEWarWagers-watcher-logo.png"
+                  src="/watcher/aoe2de-watcher-logo.png"
                   alt="AoE2DEWarWagers Watcher logo"
                   fill
                   className="object-contain p-2"

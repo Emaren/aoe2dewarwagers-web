@@ -32,6 +32,17 @@ import {
   isBetStakeIntentCountableStatus,
   loadViewerBetStakeIntents,
 } from "@/lib/betStakeIntents";
+import {
+  normalizeWatchStreamInput,
+  toWatchStreamPayload,
+  type WatchStreamPayload,
+} from "@/lib/watchStreams";
+import {
+  buildBetBroadcastPreviewUrls,
+  EMPTY_BET_BROADCAST_PREVIEW_URLS,
+  loadBetBroadcastPreviewMap,
+  type BetBroadcastPreviewUrls,
+} from "@/lib/betBroadcastPreviews";
 
 export type BetSide = "left" | "right";
 export type BetStatus = "open" | "closing" | "live" | "settled";
@@ -69,6 +80,18 @@ export type BetWarTapeRow = {
   createdAt: string;
 };
 
+export type BetBroadcastFeeds = {
+  left: WatchStreamPayload | null;
+  god: WatchStreamPayload | null;
+  right: WatchStreamPayload | null;
+};
+
+const EMPTY_BROADCAST_FEEDS: BetBroadcastFeeds = {
+  left: null,
+  god: null,
+  right: null,
+};
+
 export type BetBoardMarket = {
   id: number;
   slug: string;
@@ -80,11 +103,14 @@ export type BetBoardMarket = {
   status: BetStatus;
   featured: boolean;
   closeLabel: string;
+  scheduledStartAt: string | null;
   totalPotWolo: number;
   left: BetBoardSide;
   right: BetBoardSide;
   founderBonuses: BetFounderChip[];
   warTape: BetWarTapeRow[];
+  broadcastFeeds: BetBroadcastFeeds;
+  broadcastPreviewUrls: BetBroadcastPreviewUrls;
   viewerWager: {
     side: BetSide;
     amountWolo: number;
@@ -108,6 +134,7 @@ export type BetBookEntry = {
   slipCount: number;
   projectedReturnWolo: number;
   closeLabel: string;
+  scheduledStartAt: string | null;
   status: BetStatus;
   executionMode: "app_only" | "onchain_escrow";
   stakeTxHash: string | null;
@@ -124,6 +151,9 @@ export type BetSettledResult = {
   payoutWolo: number;
   settledAt: string | null;
   href: string | null;
+  linkedSessionKey: string | null;
+  broadcastFeeds: BetBroadcastFeeds;
+  broadcastPreviewUrls: BetBroadcastPreviewUrls;
   founderBonuses: BetFounderChip[];
 };
 
@@ -156,6 +186,7 @@ export type BetBoardSnapshot = {
     unresolvedStakeIntents: Array<{
       id: number;
       marketId: number;
+      marketStatus: BetStatus;
       title: string;
       eventLabel: string;
       side: BetSide;
@@ -284,22 +315,58 @@ function buildBetMarketHref(input: {
 }
 
 function getNamedSessionPlayers(session: LiveGameSession) {
-  const seen = new Map<string, { name: string; winner: boolean | null }>();
+  const seen = new Map<
+    string,
+    {
+      name: string;
+      winner: boolean | null;
+      team?: unknown;
+      teamNumber?: unknown;
+      team_number?: unknown;
+      teamId?: unknown;
+      team_id?: unknown;
+    }
+  >();
 
   for (const player of session.players) {
     const name = normalizeName(player.name);
     if (!name) continue;
+
+    const record = player as {
+      name?: unknown;
+      winner?: boolean | null;
+      team?: unknown;
+      teamNumber?: unknown;
+      team_number?: unknown;
+      teamId?: unknown;
+      team_id?: unknown;
+    };
+
     const key = name.toLowerCase();
     const existing = seen.get(key);
 
     if (!existing) {
-      seen.set(key, { name, winner: player.winner });
+      seen.set(key, {
+        name,
+        winner: player.winner,
+        team: record.team,
+        teamNumber: record.teamNumber,
+        team_number: record.team_number,
+        teamId: record.teamId,
+        team_id: record.team_id,
+      });
       continue;
     }
 
     if (player.winner === true && existing.winner !== true) {
       existing.winner = true;
     }
+
+    existing.team ??= record.team;
+    existing.teamNumber ??= record.teamNumber;
+    existing.team_number ??= record.team_number;
+    existing.teamId ??= record.teamId;
+    existing.team_id ??= record.team_id;
   }
 
   return Array.from(seen.values());
@@ -313,11 +380,94 @@ type SessionSideDescription = {
   rightNames: string[];
 };
 
+
+function readSessionPlayerTeam(player: ReturnType<typeof getNamedSessionPlayers>[number]) {
+  const record = player as {
+    team?: unknown;
+    teamNumber?: unknown;
+    team_number?: unknown;
+    teamId?: unknown;
+    team_id?: unknown;
+  };
+
+  const rawTeam =
+    record.team ??
+    record.teamNumber ??
+    record.team_number ??
+    record.teamId ??
+    record.team_id ??
+    null;
+
+  if (typeof rawTeam === "number" && Number.isFinite(rawTeam) && rawTeam > 0) {
+    return String(Math.trunc(rawTeam));
+  }
+
+  const teamText = normalizeName(String(rawTeam ?? ""));
+  if (!teamText) return null;
+
+  const lowered = teamText.toLowerCase();
+  if (lowered === "0" || lowered === "-1" || lowered === "none" || lowered === "unknown") {
+    return null;
+  }
+
+  return teamText;
+}
+
+function teamSortKey(team: string) {
+  const numeric = Number(team);
+  return Number.isFinite(numeric) ? numeric : 999;
+}
+
+function compactTeamLabel(names: string[]) {
+  if (names.length <= 2) return names.join(" + ");
+  return `${names[0]} + ${names[1]} + ${names.length - 2} more`;
+}
+
+function clampMarketLabel(label: string) {
+  const clean = normalizeName(label);
+  if (clean.length <= 80) return clean;
+  return `${clean.slice(0, 77).trimEnd()}…`;
+}
+
+function formatTeamLabel(names: string[]) {
+  return clampMarketLabel(compactTeamLabel(names));
+}
+
 function describeSessionSides(session: LiveGameSession): SessionSideDescription | null {
   const players = getNamedSessionPlayers(session);
 
   if (players.length < 2) {
     return null;
+  }
+
+  const teams = new Map<string, string[]>();
+
+  for (const player of players) {
+    const team = readSessionPlayerTeam(player);
+    if (!team) continue;
+
+    const existing = teams.get(team) || [];
+    existing.push(player.name);
+    teams.set(team, existing);
+  }
+
+  const teamEntries = [...teams.entries()]
+    .filter(([, names]) => names.length > 0)
+    .sort((left, right) => teamSortKey(left[0]) - teamSortKey(right[0]) || left[0].localeCompare(right[0]));
+
+  if (teamEntries.length === 2) {
+    const leftNames = teamEntries[0][1];
+    const rightNames = teamEntries[1][1];
+    const leftLabel = formatTeamLabel(leftNames);
+    const rightLabel = formatTeamLabel(rightNames);
+
+    return {
+      title: `${leftLabel} vs ${rightLabel}`,
+      leftLabel,
+      rightLabel,
+      leftNames,
+      rightNames,
+    };
   }
 
   const [focusPlayer, ...fieldPlayers] = players;
@@ -452,9 +602,23 @@ function buildSessionEventLabel(session: LiveGameSession) {
   return buildWatcherEventLabel(session.state === "live" ? "Live" : "Final", session.mapName);
 }
 
+function clampDbText(value: string, max: number) {
+  if (value.length <= max) return value;
+  if (max <= 1) return value.slice(0, max);
+  return `${value.slice(0, max - 1).trimEnd()}…`;
+}
+
+function clampNullableDbText(value: string | null | undefined, max: number) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return clampDbText(trimmed, max);
+}
+
 function buildWatcherEventLabel(mode: "Live" | "Final", mapName: string | null | undefined) {
   const normalizedMapName = normalizeName(mapName);
-  return normalizedMapName ? `Watcher ${mode} • ${normalizedMapName}` : `Watcher ${mode}`;
+  const label = normalizedMapName ? `Watcher ${mode} • ${normalizedMapName}` : `Watcher ${mode}`;
+  return clampDbText(label, 120);
 }
 
 function buildSessionMarketTitle(session: LiveGameSession) {
@@ -519,41 +683,63 @@ function buildSessionMarketSeed(
   index: number,
   featured: boolean
 ): MarketSeed | null {
-  if (!session.betArmingEligible) return null;
-
   const sides = describeSessionSides(session);
-  if (!sides) return null;
 
+  // Raw watcher-live rows can appear before the parser has player/team data.
+  // Do not hide those from /bets. Surface them as a temporary live observer book.
+  if (!sides && session.state !== "live") return null;
+
+  const leftLabel = sides?.leftLabel || "Live 4v4";
+  const rightLabel = sides?.rightLabel || "Parsing";
+  const rightNames = sides?.rightNames || [];
+  const title = sides?.title || "Live 4v4 detected";
   const settledAtRaw = session.completedAt || session.updatedAt || session.createdAt;
 
   return {
     scheduledMatchId: null,
     linkedSessionKey: session.sessionKey || session.originalFilename || null,
-    slug: buildSessionMarketSlug(session, sides.leftLabel, sides.rightLabel),
-    title: sides.title,
-    eventLabel: buildSessionEventLabel(session),
+    slug: buildSessionMarketSlug(session, leftLabel, rightLabel),
+    title,
+    eventLabel: sides ? buildSessionEventLabel(session) : "Watcher Live · Players parsing",
     status: session.state === "completed" ? "settled" : "live",
     featured,
     sortOrder: index,
     source: "session",
-    leftLabel: sides.leftLabel,
-    rightLabel: sides.rightLabel,
-    leftHref: `/players/by-name/${encodeURIComponent(sides.leftLabel)}`,
+    leftLabel,
+    rightLabel,
+    leftHref: sides ? `/players/by-name/${encodeURIComponent(leftLabel)}` : null,
     rightHref:
-      sides.rightNames.length === 1
-        ? `/players/by-name/${encodeURIComponent(sides.rightNames[0])}`
+      rightNames.length === 1
+        ? `/players/by-name/${encodeURIComponent(rightNames[0])}`
         : null,
     seedLeftWolo: 0,
     seedRightWolo: 0,
     closeAt: null,
     settledAt: session.state === "completed" ? new Date(settledAtRaw) : null,
-    winnerSide: session.state === "completed" ? inferWinnerSideFromSession(session) : null,
+    winnerSide:
+      session.state === "completed" && sides
+        ? inferWinnerSideFromSession(session)
+        : null,
   } satisfies MarketSeed;
 }
 
 function marketStatusFromScheduledMatch(displayState: ScheduledMatchTile["displayState"]): BetStatus {
   if (displayState === "live") return "live";
-  if (displayState === "accepted") return "closing";
+  if (
+    [
+      "accepted",
+      "terms_accepted",
+      "creator_funded",
+      "opponent_funded",
+      "funded",
+      "checkin_open",
+      "left_checked_in",
+      "right_checked_in",
+      "ready",
+    ].includes(displayState)
+  ) {
+    return "closing";
+  }
   return "settled";
 }
 
@@ -581,12 +767,45 @@ function inferWinnerSideFromChallenge(match: ScheduledMatchTile): BetSide | null
 
 function buildChallengeMarketSeeds(scheduledMatches: ScheduledMatchTile[]) {
   const challengeMatches = scheduledMatches.filter((match) =>
-    ["accepted", "live", "completed", "forfeited", "declined", "cancelled"].includes(
+    [
+      "proposed",
+      "pending",
+      "accepted",
+      "terms_accepted",
+      "creator_funded",
+      "opponent_funded",
+      "funded",
+      "checkin_open",
+      "left_checked_in",
+      "right_checked_in",
+      "ready",
+      "live",
+      "completed",
+      "forfeited",
+      "declined",
+      "cancelled",
+      "canceled",
+      "no_show_left",
+      "no_show_right",
+      "double_no_show",
+      "refunded",
+    ].includes(
       match.displayState
     )
   );
   const featuredChallengeIndex = challengeMatches.findIndex((match) =>
-    ["accepted", "live"].includes(match.displayState)
+    [
+      "accepted",
+      "terms_accepted",
+      "creator_funded",
+      "opponent_funded",
+      "funded",
+      "checkin_open",
+      "left_checked_in",
+      "right_checked_in",
+      "ready",
+      "live",
+    ].includes(match.displayState)
   );
 
   return challengeMatches.map((match, index) => ({
@@ -613,7 +832,12 @@ function buildChallengeMarketSeeds(scheduledMatches: ScheduledMatchTile[]) {
       match.displayState === "completed" ||
       match.displayState === "forfeited" ||
       match.displayState === "declined" ||
-      match.displayState === "cancelled"
+      match.displayState === "cancelled" ||
+      match.displayState === "canceled" ||
+      match.displayState === "no_show_left" ||
+      match.displayState === "no_show_right" ||
+      match.displayState === "double_no_show" ||
+      match.displayState === "refunded"
         ? new Date(match.activityAt)
         : null,
     winnerSide: match.displayState === "completed" ? inferWinnerSideFromChallenge(match) : null,
@@ -1076,19 +1300,19 @@ function combineSettlementDetail(
     .map((warning) => warning.trim())
     .filter(Boolean);
 
+  let combined: string | null = null;
+
   if (!detail && normalizedWarnings.length === 0) {
-    return null;
+    combined = null;
+  } else if (!detail) {
+    combined = normalizedWarnings.join(" ");
+  } else if (normalizedWarnings.length === 0) {
+    combined = detail;
+  } else {
+    combined = `${detail} Warnings: ${normalizedWarnings.join(" ")}`;
   }
 
-  if (!detail) {
-    return normalizedWarnings.join(" ");
-  }
-
-  if (normalizedWarnings.length === 0) {
-    return detail;
-  }
-
-  return `${detail} Warnings: ${normalizedWarnings.join(" ")}`;
+  return clampNullableDbText(combined, 255);
 }
 
 async function settleResolvedMarketWagers(prisma: PrismaClient) {
@@ -1302,7 +1526,7 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
       settlementAttemptedAt = new Date();
       validationResult = await validateWoloSettlementRun({
         settlementRunId,
-        sourceApp: "aoe2hdbets",
+        sourceApp: "aoe2dewarwagers",
         sourceEventId: `bet-market-${market.id}`,
         note: `Bet settlement · ${market.title}`,
         memo: `AoE2 bet settlement · market ${market.id}`,
@@ -1316,7 +1540,7 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
 
       executionResult = await executeWoloSettlementRun({
         settlementRunId,
-        sourceApp: "aoe2hdbets",
+        sourceApp: "aoe2dewarwagers",
         sourceEventId: `bet-market-${market.id}`,
         note: `Bet settlement · ${market.title}`,
         memo: `AoE2 bet settlement · market ${market.id}`,
@@ -1338,8 +1562,10 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
       validationResult,
       claimPlanList.length
     );
-    const settlementFailureCode =
-      executionResult?.failureCode || validationResult?.failureCode || null;
+    const settlementFailureCode = clampNullableDbText(
+      executionResult?.failureCode || validationResult?.failureCode || null,
+      80
+    );
     const settlementDetail = combineSettlementDetail(
       executionResult?.detail ||
       validationResult?.detail ||
@@ -1540,9 +1766,7 @@ async function reconcileBetMarketStatsLinks(prisma: PrismaClient) {
     if (!finalGameIdBySessionKey.has(sessionKey)) {
       finalGameIdBySessionKey.set(
         sessionKey,
-        await resolveFinalGameStatsIdForSessionKey(prisma, sessionKey, {
-          requireBetEligible: true,
-        })
+        await resolveFinalGameStatsIdForSessionKey(prisma, sessionKey)
       );
     }
   }
@@ -1623,9 +1847,7 @@ async function reconcileDetachedWatcherMarkets(
     if (!finalGameIdBySessionKey.has(sessionKey)) {
       finalGameIdBySessionKey.set(
         sessionKey,
-        await resolveFinalGameStatsIdForSessionKey(prisma, sessionKey, {
-          requireBetEligible: true,
-        })
+        await resolveFinalGameStatsIdForSessionKey(prisma, sessionKey)
       );
     }
 
@@ -1822,6 +2044,7 @@ function buildMarketCard(
     status: market.status as BetStatus,
     featured: market.featured,
     closeLabel: formatCloseLabel(market.status as BetStatus, market.closeAt),
+    scheduledStartAt: market.closeAt?.toISOString() ?? market.scheduledMatch?.scheduledAt?.toISOString() ?? null,
     totalPotWolo,
     left: {
       key: "left",
@@ -1843,6 +2066,8 @@ function buildMarketCard(
     },
     founderBonuses,
     warTape,
+    broadcastFeeds: EMPTY_BROADCAST_FEEDS,
+    broadcastPreviewUrls: { ...EMPTY_BET_BROADCAST_PREVIEW_URLS },
     viewerWager: latestViewerWager
       ? {
           side: latestViewerWager.side as BetSide,
@@ -1871,6 +2096,7 @@ async function loadOpenMarkets(prisma: PrismaClient) {
     include: {
       scheduledMatch: {
         select: {
+          scheduledAt: true,
           linkedSessionKey: true,
         },
       },
@@ -2005,6 +2231,9 @@ async function loadRecentSettledResults(prisma: PrismaClient): Promise<BetSettle
         payoutWolo,
         settledAt: matchedSession?.settledAt || market.settledAt?.toISOString() || null,
         href,
+        linkedSessionKey,
+        broadcastFeeds: EMPTY_BROADCAST_FEEDS,
+        broadcastPreviewUrls: { ...EMPTY_BET_BROADCAST_PREVIEW_URLS },
         founderBonuses: market.founderBonuses.map((bonus) => ({
           id: bonus.id,
           bonusType: bonus.bonusType === "winner" ? "winner" : "participants",
@@ -2021,14 +2250,13 @@ async function loadRecentSettledResults(prisma: PrismaClient): Promise<BetSettle
     where: {
       is_final: true,
       winner: { not: null },
-      parse_reason: {
-        notIn: ["watcher_final_metadata", "watcher_final_unparsed"],
-      },
     },
     orderBy: [{ played_on: "desc" }, { timestamp: "desc" }, { id: "desc" }],
     take: 4,
     select: {
       id: true,
+      replay_file: true,
+      original_filename: true,
       winner: true,
       map: true,
       players: true,
@@ -2061,9 +2289,279 @@ async function loadRecentSettledResults(prisma: PrismaClient): Promise<BetSettle
       payoutWolo: 110 + (hashValue(`${row.id}:${row.winner}`) % 240),
       settledAt: row.played_on?.toISOString() || row.timestamp?.toISOString() || null,
       href: null,
+      linkedSessionKey: (row.original_filename || row.replay_file || "").trim() || null,
+      broadcastFeeds: EMPTY_BROADCAST_FEEDS,
+      broadcastPreviewUrls: { ...EMPTY_BET_BROADCAST_PREVIEW_URLS },
       founderBonuses: [],
     };
   });
+}
+
+function normalizeBroadcastToken(value: string | null | undefined) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function streamMatchesPlayer(stream: WatchStreamPayload, playerName: string) {
+  const target = normalizeBroadcastToken(playerName);
+  if (!target) return false;
+
+  const fields = [stream.playerLabel, stream.label, stream.url]
+    .map(normalizeBroadcastToken)
+    .filter(Boolean);
+
+  return fields.some((field) => field === target || field.includes(target));
+}
+
+function isPlayerViewStream(stream: WatchStreamPayload) {
+  return stream.role === "player_pov" || stream.role === "team_pov";
+}
+
+function selectGodBroadcastFeed(streams: WatchStreamPayload[]) {
+  return (
+    streams.find((stream) => stream.isPrimary) ||
+    streams.find((stream) => stream.role === "observer") ||
+    streams.find((stream) => stream.role === "caster") ||
+    streams.find((stream) => stream.role === "external") ||
+    streams[0] ||
+    null
+  );
+}
+
+function selectPlayerBroadcastFeed({
+  streams,
+  playerName,
+  side,
+  godFeed,
+}: {
+  streams: WatchStreamPayload[];
+  playerName: string;
+  side: BetSide;
+  godFeed: WatchStreamPayload | null;
+}) {
+  const playerStreams = streams.filter(
+    (stream) => isPlayerViewStream(stream) && stream.id !== godFeed?.id
+  );
+
+  const namedMatch =
+    playerStreams.find((stream) => streamMatchesPlayer(stream, playerName)) ||
+    streams.find(
+      (stream) =>
+        stream.id !== godFeed?.id &&
+        !stream.isPrimary &&
+        !["caster", "observer"].includes(stream.role) &&
+        streamMatchesPlayer(stream, playerName)
+    );
+
+  if (namedMatch) {
+    return namedMatch;
+  }
+
+  if (playerStreams.length >= 2) {
+    return side === "left" ? playerStreams[0] : playerStreams[1];
+  }
+
+  if (side === "left" && playerStreams.length === 1) {
+    return playerStreams[0];
+  }
+
+  if (godFeed && streamMatchesPlayer(godFeed, playerName)) {
+    return godFeed;
+  }
+
+  return null;
+}
+
+function stableProfileStreamId(parts: Array<string | null | undefined>) {
+  const input = parts.filter(Boolean).join("::");
+  let hash = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash * 31 + input.charCodeAt(index)) >>> 0;
+  }
+  return -1 - (hash % 1_000_000_000);
+}
+
+function buildProfileBroadcastFeed({
+  sessionKey,
+  playerName,
+  url,
+  side,
+}: {
+  sessionKey: string | null | undefined;
+  playerName: string;
+  url: string | null | undefined;
+  side: BetSide;
+}): WatchStreamPayload | null {
+  if (!url) {
+    return null;
+  }
+
+  try {
+    const normalized = normalizeWatchStreamInput({
+      sessionKey: sessionKey || `profile-${side}-${normalizeBroadcastToken(playerName) || side}`,
+      url,
+      role: "player_pov",
+      label: `${playerName || (side === "left" ? "Player 1" : "Player 2")} POV`,
+      playerLabel: playerName,
+      isPrimary: false,
+    });
+    const timestamp = new Date(0).toISOString();
+
+    return {
+      id: stableProfileStreamId([normalized.sessionKey, side, playerName, normalized.url]),
+      ...normalized,
+      status: "profile",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildBroadcastFeedsForMatch({
+  streams,
+  leftName,
+  rightName,
+  sessionKey,
+  profileFeedUrls,
+}: {
+  streams: WatchStreamPayload[] | undefined;
+  leftName: string;
+  rightName: string;
+  sessionKey?: string | null;
+  profileFeedUrls?: {
+    left?: string | null;
+    right?: string | null;
+  };
+}): BetBroadcastFeeds {
+  const availableStreams = streams ?? [];
+  const god = selectGodBroadcastFeed(availableStreams);
+
+  return {
+    left:
+      selectPlayerBroadcastFeed({
+        streams: availableStreams,
+        playerName: leftName,
+        side: "left",
+        godFeed: god,
+      }) ||
+      buildProfileBroadcastFeed({
+        sessionKey,
+        playerName: leftName,
+        url: profileFeedUrls?.left,
+        side: "left",
+      }),
+    god,
+    right:
+      selectPlayerBroadcastFeed({
+        streams: availableStreams,
+        playerName: rightName,
+        side: "right",
+        godFeed: god,
+      }) ||
+      buildProfileBroadcastFeed({
+        sessionKey,
+        playerName: rightName,
+        url: profileFeedUrls?.right,
+        side: "right",
+      }),
+  };
+}
+
+function splitBetTitlePlayers(title: string) {
+  const [leftName = "", ...rightParts] = title.split(/\s+vs\s+/i);
+  return {
+    leftName: leftName.trim(),
+    rightName: rightParts.join(" vs ").trim(),
+  };
+}
+
+async function loadProfileTwitchStreamsByPlayerName(
+  prisma: PrismaClient,
+  playerNames: string[]
+) {
+  const requestedNames = new Set(
+    playerNames.map(normalizeBroadcastToken).filter(Boolean)
+  );
+
+  if (!requestedNames.size) {
+    return new Map<string, string>();
+  }
+
+  const rows = await prisma.user.findMany({
+    where: {
+      twitchStreamUrl: {
+        not: null,
+      },
+    },
+    select: {
+      uid: true,
+      inGameName: true,
+      steamPersonaName: true,
+      twitchStreamUrl: true,
+    },
+  });
+
+  const streamByName = new Map<string, string>();
+
+  for (const row of rows) {
+    if (!row.twitchStreamUrl) {
+      continue;
+    }
+
+    const aliases = [row.inGameName, row.steamPersonaName, row.uid]
+      .map(normalizeBroadcastToken)
+      .filter(Boolean);
+
+    for (const alias of aliases) {
+      if (requestedNames.has(alias)) {
+        streamByName.set(alias, row.twitchStreamUrl);
+      }
+    }
+  }
+
+  return streamByName;
+}
+
+function getProfileTwitchStreamUrl(streamByName: Map<string, string>, playerName: string) {
+  const key = normalizeBroadcastToken(playerName);
+  return key ? streamByName.get(key) ?? null : null;
+}
+
+async function loadWatchStreamsBySession(
+  prisma: PrismaClient,
+  sessionKeys: string[]
+) {
+  const uniqueSessionKeys = Array.from(new Set(sessionKeys.map((key) => key.trim()).filter(Boolean)));
+  if (!uniqueSessionKeys.length) {
+    return new Map<string, WatchStreamPayload[]>();
+  }
+
+  const rows = await prisma.gameWatchStream.findMany({
+    where: {
+      sessionKey: {
+        in: uniqueSessionKeys,
+      },
+      status: {
+        not: "removed",
+      },
+    },
+    orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }, { id: "asc" }],
+  });
+
+  const streamsBySession = new Map<string, WatchStreamPayload[]>();
+
+  for (const row of rows) {
+    const stream = toWatchStreamPayload(row);
+    const bucket = streamsBySession.get(stream.sessionKey) ?? [];
+    bucket.push(stream);
+    streamsBySession.set(stream.sessionKey, bucket);
+  }
+
+  return streamsBySession;
 }
 
 export async function loadBetBoardSnapshot(
@@ -2084,7 +2582,7 @@ export async function loadBetBoardSnapshot(
       })
     : null;
 
-  const [openMarketsRaw, settledResults, unresolvedStakeIntents, settlementSurface] = await Promise.all([
+  const [openMarketsRaw, settledResultsRaw, unresolvedStakeIntents, settlementSurface] = await Promise.all([
     loadOpenMarkets(prisma),
     loadRecentSettledResults(prisma),
     viewer?.id ? loadViewerBetStakeIntents(prisma, viewer.id) : Promise.resolve([]),
@@ -2126,9 +2624,67 @@ export async function loadBetBoardSnapshot(
     claimsByMarketId.set(claim.sourceMarketId, bucket);
   }
 
-  const openMarkets = openMarketsRaw.map((market) =>
+  const openMarketsWithoutFeeds = openMarketsRaw.map((market) =>
     buildMarketCard(market, viewer?.id ?? null, claimsByMarketId)
   );
+  const broadcastSessionKeys = [
+    ...openMarketsWithoutFeeds.map((market) => market.linkedSessionKey),
+    ...settledResultsRaw.map((result) => result.linkedSessionKey),
+  ].filter(Boolean) as string[];
+  const broadcastPlayerNames = [
+    ...openMarketsWithoutFeeds.flatMap((market) => [market.left.name, market.right.name]),
+    ...settledResultsRaw.flatMap((result) => {
+      const players = splitBetTitlePlayers(result.title);
+      return [players.leftName, players.rightName];
+    }),
+  ];
+  const [streamsBySession, broadcastPreviewsByKey, profileTwitchStreamsByName] = await Promise.all([
+    loadWatchStreamsBySession(prisma, broadcastSessionKeys),
+    loadBetBroadcastPreviewMap(),
+    loadProfileTwitchStreamsByPlayerName(prisma, broadcastPlayerNames),
+  ]);
+  const openMarkets = openMarketsWithoutFeeds.map((market) => ({
+    ...market,
+    broadcastFeeds: buildBroadcastFeedsForMatch({
+      streams: market.linkedSessionKey
+        ? streamsBySession.get(market.linkedSessionKey)
+        : undefined,
+      leftName: market.left.name,
+      rightName: market.right.name,
+      sessionKey: market.linkedSessionKey,
+      profileFeedUrls: {
+        left: getProfileTwitchStreamUrl(profileTwitchStreamsByName, market.left.name),
+        right: getProfileTwitchStreamUrl(profileTwitchStreamsByName, market.right.name),
+      },
+    }),
+    broadcastPreviewUrls: buildBetBroadcastPreviewUrls(
+      market.linkedSessionKey,
+      broadcastPreviewsByKey
+    ),
+  }));
+  const settledResults = settledResultsRaw.map((result) => {
+    const { leftName, rightName } = splitBetTitlePlayers(result.title);
+
+    return {
+      ...result,
+      broadcastFeeds: buildBroadcastFeedsForMatch({
+        streams: result.linkedSessionKey
+          ? streamsBySession.get(result.linkedSessionKey)
+          : undefined,
+        leftName,
+        rightName,
+        sessionKey: result.linkedSessionKey,
+        profileFeedUrls: {
+          left: getProfileTwitchStreamUrl(profileTwitchStreamsByName, leftName),
+          right: getProfileTwitchStreamUrl(profileTwitchStreamsByName, rightName),
+        },
+      }),
+      broadcastPreviewUrls: buildBetBroadcastPreviewUrls(
+        result.linkedSessionKey,
+        broadcastPreviewsByKey
+      ),
+    };
+  });
   const featuredMarket = openMarkets.find((market) => market.featured) || openMarkets[0] || null;
 
   const openWagers = openMarkets
@@ -2154,6 +2710,7 @@ export async function loadBetBoardSnapshot(
           otherPool
         ),
         closeLabel: market.closeLabel,
+        scheduledStartAt: market.scheduledStartAt,
         status: market.status,
         executionMode: market.viewerWager?.executionMode || "app_only",
         stakeTxHash: market.viewerWager?.stakeTxHash || null,
@@ -2225,6 +2782,7 @@ export async function loadBetBoardSnapshot(
       unresolvedStakeIntents: unresolvedStakeIntents.map((intent) => ({
         id: intent.id,
         marketId: intent.marketId,
+        marketStatus: intent.market.status as BetStatus,
         title: intent.market.title,
         eventLabel: intent.market.eventLabel,
         side: intent.side === "right" ? "right" : "left",

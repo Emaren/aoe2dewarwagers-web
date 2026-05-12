@@ -141,13 +141,13 @@ Current state:
 
 Current state:
 - parser now captures much more replay metadata
-- official HD rating snapshots are surfaced
+- DE replay/runtime metadata is surfaced when parser support allows it
 - normal live-to-final behavior looks materially healthier than before
 - exact postgame achievement tabs still are not solved
 
 If exact score/economy/military tables matter, likely next step is:
 - screenshot ingestion / OCR
-- or deeper HD-specific replay/postgame parsing
+- or deeper DE-specific replay/postgame parsing
 
 ### Watcher/runtime tuning
 

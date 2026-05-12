@@ -10,10 +10,22 @@ import {
   formatCompact,
   formatSettledTime,
   insetClass,
+  isRecoveryBookOpen,
   shellClass,
   shortTxHash,
 } from "@/components/bets/page-shared";
 import { buildWoloRestTxLookupUrl } from "@/lib/woloChain";
+
+function formatRecoveryIntentStatus(status: string) {
+  switch (status) {
+    case "verified_unrecorded":
+      return "verified, not recorded";
+    case "broadcast_submitted":
+      return "broadcast submitted";
+    default:
+      return status.replace(/_/g, " ");
+  }
+}
 
 export default function YourBookSection({
   board,
@@ -34,6 +46,15 @@ export default function YourBookSection({
   recoveringIntentId: number | null;
   onRecover: (intentId: number) => Promise<void>;
 }) {
+  const actionableStakeIntents = unresolvedStakeIntents.filter((intent) => {
+    const pendingRecovery =
+      pendingStakeRecoveries.find((entry) => entry.intentId === intent.id) || null;
+    return Boolean(
+      isRecoveryBookOpen(intent.marketStatus) &&
+        (intent.stakeTxHash || pendingRecovery?.stakeTxHash)
+    );
+  });
+
   return (
     <section id="your-book" className={`${shellClass()} p-5 sm:p-6`}>
       <div className="flex items-end justify-between gap-3">
@@ -62,9 +83,9 @@ export default function YourBookSection({
             />
           </div>
 
-          {unresolvedStakeIntents.length ? (
+          {actionableStakeIntents.length ? (
             <div className="mt-5 space-y-2">
-              {unresolvedStakeIntents.map((intent) => {
+              {actionableStakeIntents.map((intent) => {
                 const pendingRecovery =
                   pendingStakeRecoveries.find((entry) => entry.intentId === intent.id) || null;
                 const stakeProofUrl = intent.stakeTxHash
@@ -72,7 +93,6 @@ export default function YourBookSection({
                   : pendingRecovery?.stakeTxHash
                     ? buildWoloRestTxLookupUrl(pendingRecovery.stakeTxHash)
                     : null;
-                const canRecover = Boolean(intent.stakeTxHash || pendingRecovery?.stakeTxHash);
 
                 return (
                   <div
@@ -85,7 +105,7 @@ export default function YourBookSection({
                           Signed stake recovery · {intent.title}
                         </div>
                         <div className="mt-1 text-sm text-slate-300">
-                          {intent.side === "left" ? "Left side" : "Right side"} · {formatCompact(intent.amountWolo)} WOLO · {intent.status}
+                          {intent.side === "left" ? "Left side" : "Right side"} · {formatCompact(intent.amountWolo)} WOLO · {formatRecoveryIntentStatus(intent.status)}
                         </div>
                         <div className="mt-1 text-xs text-slate-400">
                           Pools and settlement exclude this stake until it is safely recorded.
@@ -114,9 +134,9 @@ export default function YourBookSection({
                           onClick={() => {
                             void onRecover(intent.id);
                           }}
-                          disabled={!canRecover || recoveringIntentId === intent.id}
+                          disabled={recoveringIntentId === intent.id}
                           className={`inline-flex items-center rounded-full px-3 py-2 text-xs font-semibold transition ${edgeButton("gold")} ${
-                            !canRecover || recoveringIntentId === intent.id ? "opacity-60" : ""
+                            recoveringIntentId === intent.id ? "opacity-60" : ""
                           }`}
                         >
                           {recoveringIntentId === intent.id ? "Recovering..." : "Recover"}

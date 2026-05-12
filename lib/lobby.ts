@@ -1,3 +1,5 @@
+import type { Aoe2HdPulseSnapshot } from "@/lib/aoe2HdPulse";
+
 export const LOBBY_ROOM_SLUG = "main-lobby";
 export const LOBBY_MESSAGE_MAX_CHARS = 280;
 export const TOURNAMENT_STATUSES = ["planning", "open", "active", "completed"] as const;
@@ -31,7 +33,6 @@ export type LobbyMatchRow = {
   played_on: string | null;
   timestamp: string | null;
   parse_reason?: string | null;
-  key_events?: unknown;
   original_filename?: string | null;
   replay_file?: string | null;
 };
@@ -194,6 +195,7 @@ export type LobbyWoloEarnersEntry = {
   claimed: boolean;
   verified: boolean;
   verificationLevel: number;
+  allTimeTakeWolo: number;
   weeklyTakeWolo: number;
   settledWolo: number;
   wageredWolo: number;
@@ -204,7 +206,10 @@ export type LobbyWoloEarnersEntry = {
   sourceWindow: "weekly" | "backfill";
 };
 
+export type LobbyWoloEarnersMode = "all_time" | "weekly";
+
 export type LobbyWoloEarnersBoard = {
+  mode: LobbyWoloEarnersMode;
   timeframeDays: number;
   visibleSlots: number;
   totalParticipants: number;
@@ -222,6 +227,7 @@ export type LobbySnapshot = {
   leaderboard: LobbyLeaderboardSummary;
   wolo: LobbyWoloSnapshot | null;
   woloEarners: LobbyWoloEarnersBoard;
+  aoe2dePulse: Aoe2HdPulseSnapshot;
 };
 
 export function slugifyTournamentTitle(value: string) {
@@ -268,7 +274,7 @@ export function getFallbackTournament(viewerJoined = false): LobbyTournament {
 export function getFallbackLeaderboard(): LobbyLeaderboardSummary {
   return {
     title: "Season Leaderboard",
-    statusLabel: "Arena Elo",
+    statusLabel: "Site Elo",
     entries: [],
     activePlayers: 0,
     matchesToday: 0,
@@ -281,6 +287,7 @@ export function getFallbackLeaderboard(): LobbyLeaderboardSummary {
 export function getFallbackWoloEarnersBoard(): LobbyWoloEarnersBoard {
   const generatedAt = new Date().toISOString();
   return {
+    mode: "weekly",
     timeframeDays: 7,
     visibleSlots: 3,
     totalParticipants: 0,
