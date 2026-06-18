@@ -226,8 +226,10 @@ export default function LiveReplayDetail({
             <div className="text-xs uppercase tracking-[0.35em] text-red-200/75">
               {isBattleArchive ? "Battle Archive" : "Live Replay Detail"}
             </div>
-            <h1 className="text-4xl font-semibold text-white sm:text-5xl">{readMapName(game.map)}</h1>
-            <p className="max-w-3xl text-base leading-7 text-slate-300 sm:text-lg">
+            <h1 className="break-words text-4xl font-semibold text-white sm:text-5xl [overflow-wrap:anywhere]">
+              {readMapName(game.map)}
+            </h1>
+            <p className="max-w-3xl break-words text-base leading-7 text-slate-300 sm:text-lg [overflow-wrap:anywhere]">
               {players.length > 0
                 ? players.map((player) => displayPlayerName(player)).join(" vs ")
                 : displayReplayFilename(game.originalFilename, game.replayFile)}
@@ -408,7 +410,7 @@ export default function LiveReplayDetail({
             <div className="mt-5 rounded-2xl border border-white/8 bg-white/5 px-4 py-4 text-sm leading-6 text-slate-200">
               The page is following the replay as a stream of watcher pulses. Right now it can confidently show
               duration growth, player identity, EAPM drift, event-family coverage, chat signals, and parser state.
-              Final-style scoreboards only unlock once HD starts surfacing them or the closing replay lands.
+              Final-style scoreboards only unlock once DE starts surfacing them or the closing replay lands.
             </div>
           </Panel>
 
@@ -643,7 +645,9 @@ export default function LiveReplayDetail({
                             <span>{formatDurationLabel(Number(entry.timestamp_seconds))}</span>
                           ) : null}
                         </div>
-                        <div className="mt-2 text-sm text-slate-200">{formatPrimitive(entry.message)}</div>
+                        <div className="mt-2 break-words text-sm text-slate-200 [overflow-wrap:anywhere]">
+                          {formatPrimitive(entry.message)}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1190,7 +1194,7 @@ function buildFogItems(snapshot: LiveReplayDetailSnapshot, disconnectDetected: b
   if (!snapshot.telemetry.hasAchievements) {
     if (snapshot.telemetry.hasAchievementShell) {
       items.push(
-        "HD surfaced the achievement shell for this replay, but the actual military, economy, technology, and society values stayed empty, so richer stat rails remain dark."
+        "DE surfaced the achievement shell for this replay, but the actual military, economy, technology, and society values stayed empty, so richer stat rails remain dark."
       );
     } else {
       items.push(
@@ -1202,7 +1206,7 @@ function buildFogItems(snapshot: LiveReplayDetailSnapshot, disconnectDetected: b
   if (!snapshot.telemetry.hasPostgame) {
     if (snapshot.mode === "final" && snapshot.telemetry.completionSource === "resignation") {
       items.push(
-        "The final winner is already locked by a recorded resignation signal, even though HD never surfaced a full postgame scoreboard block for this replay."
+        "The final winner is already locked by a recorded resignation signal, even though DE never surfaced a full postgame scoreboard block for this replay."
       );
     } else {
       items.push(

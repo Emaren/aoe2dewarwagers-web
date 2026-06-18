@@ -15,6 +15,7 @@ export type SettlementRailRow = {
   claimKind: string;
   targetScope: string | null;
   sourceFounderBonusId: number | null;
+  sourceGameStatsId: number | null;
   claimStatus: "pending" | "claimed" | "rescinded";
   settlementMode: "pending" | "auto_settled" | "claimed_manual" | "rescinded";
   payoutTxHash: string | null;
@@ -53,6 +54,7 @@ type Props = {
   onRetry?: (claimId: number) => void | Promise<void>;
   onReconcilePending?: () => void | Promise<void>;
   onAddFounderBonus?: (row: SettlementRailRow, bonusType: FounderBonusType) => void | Promise<void>;
+  payoutExecutionConfigured?: boolean;
 };
 
 function formatWolo(value: number) {
@@ -73,13 +75,49 @@ function isAwaitingWalletLink(row: SettlementRailRow) {
   );
 }
 
-function isRetryableSettlementFailure(row: SettlementRailRow) {
-  return row.claimStatus === "pending" && Boolean(row.errorState) && !isAwaitingWalletLink(row);
+function isSettlementUnavailableDetail(value: string | null | undefined) {
+  return /settlement.*not configured|settlement_health|payout_fee_headroom_too_low|escrow_balance_too_low|payout execution.*not configured|service.*unconfigured|signer.*missing|signers unavailable|127\.0\.0\.1:8092|127\.0\.0\.1:8091|wolo-testnet/i.test(
+    value || ""
+  );
 }
 
-function pendingDetail(row: SettlementRailRow) {
+function isSettlementUnavailable(row: SettlementRailRow, payoutExecutionConfigured: boolean) {
+  return (
+    row.claimStatus === "pending" &&
+    !isAwaitingWalletLink(row) &&
+    (!payoutExecutionConfigured || isSettlementUnavailableDetail(row.errorState))
+  );
+}
+
+function requiresAdminReview(row: SettlementRailRow) {
+  if (row.claimStatus !== "pending") return false;
+  const detail = `${row.errorState || ""} ${row.note || ""}`.trim();
+  if (!detail) return false;
+  if (/fresh payout|retry fresh|fresh 1000/i.test(detail)) return false;
+  return /admin review|review required|duplicate.*(?:tx|market)|single-send|duplicate-paid|duplicate_tx_hash/i.test(
+    detail
+  );
+}
+
+function isRetryableSettlementFailure(row: SettlementRailRow) {
+  return (
+    row.claimStatus === "pending" &&
+    Boolean(row.errorState) &&
+    !requiresAdminReview(row) &&
+    !isAwaitingWalletLink(row) &&
+    !isSettlementUnavailableDetail(row.errorState)
+  );
+}
+
+function pendingDetail(row: SettlementRailRow, payoutExecutionConfigured: boolean) {
   if (isAwaitingWalletLink(row)) {
-    return "Awaiting verified wallet-linked account for this player. Retry once the player signs in and links a verified wallet.";
+    return "Player must sign in and link a verified WOLO wallet before this payout can run.";
+  }
+  if (isSettlementUnavailable(row, payoutExecutionConfigured)) {
+    return (
+      row.errorState ||
+      "Settlement service/signers unavailable: wolo-1 payouts require the mainnet settlement service on 127.0.0.1:8092 or an explicit mainnet Bet Payout signer. Do not retry against 127.0.0.1:8091; that is wolo-testnet."
+    );
   }
   return row.errorState;
 }
@@ -90,14 +128,20 @@ function statusTone(
     | "paid"
     | "retryable_failure"
     | "awaiting_wallet_link"
-) {
+    | "settlement_unavailable"
+    | "review_required"
+  ) {
   switch (mode) {
     case "paid":
       return "border-emerald-500/30 bg-emerald-500/10 text-emerald-100";
     case "awaiting_wallet_link":
       return "border-amber-400/30 bg-amber-500/10 text-amber-100";
+    case "settlement_unavailable":
+      return "border-cyan-300/25 bg-cyan-400/10 text-cyan-100";
     case "retryable_failure":
       return "border-rose-400/30 bg-rose-500/10 text-rose-100";
+    case "review_required":
+      return "border-fuchsia-300/30 bg-fuchsia-400/10 text-fuchsia-100";
     case "rescinded":
       return "border-rose-500/30 bg-rose-500/10 text-rose-200";
     default:
@@ -111,14 +155,20 @@ function statusLabel(
     | "paid"
     | "retryable_failure"
     | "awaiting_wallet_link"
-) {
+    | "settlement_unavailable"
+    | "review_required"
+  ) {
   switch (mode) {
     case "paid":
       return "Paid";
     case "awaiting_wallet_link":
-      return "Awaiting verified wallet-linked account";
+      return "Pending wallet link";
+    case "settlement_unavailable":
+      return "Settlement service/signers unavailable";
     case "retryable_failure":
       return "Retryable settlement failure";
+    case "review_required":
+      return "Admin review required";
     case "rescinded":
       return "Rescinded";
     default:
@@ -180,6 +230,7 @@ export function WoloSettlementRail({
   onRetry,
   onReconcilePending,
   onAddFounderBonus,
+  payoutExecutionConfigured = true,
 }: Props) {
   const showActions = !readOnly && Boolean(onRescind || onRetry || onAddFounderBonus);
   const founderRowsByBonusId = new Map<number, SettlementRailRow[]>();
@@ -220,6 +271,30 @@ export function WoloSettlementRail({
     }
   }
 
+  const pendingWalletLinkRows = rows.filter(
+    (row) => row.claimStatus === "pending" && isAwaitingWalletLink(row)
+  );
+  const pendingWalletLinkAmountWolo = pendingWalletLinkRows.reduce(
+    (total, row) => total + row.amountWolo,
+    0
+  );
+  const pendingWalletPlayerTotals = new Map<string, { rows: number; amountWolo: number }>();
+
+  for (const row of pendingWalletLinkRows) {
+    const playerName = row.displayPlayerName || "Unknown player";
+    const current = pendingWalletPlayerTotals.get(playerName) ?? { rows: 0, amountWolo: 0 };
+    pendingWalletPlayerTotals.set(playerName, {
+      rows: current.rows + 1,
+      amountWolo: current.amountWolo + row.amountWolo,
+    });
+  }
+
+  const pendingWalletLinkPlayerCount = pendingWalletPlayerTotals.size;
+  const topPendingWalletPlayers = Array.from(pendingWalletPlayerTotals.entries())
+    .map(([name, value]) => ({ name, ...value }))
+    .sort((left, right) => right.amountWolo - left.amountWolo || right.rows - left.rows)
+    .slice(0, 4);
+
   return (
     <section className="rounded-3xl border border-white/10 bg-black/30 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.35)] backdrop-blur">
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -231,7 +306,7 @@ export function WoloSettlementRail({
             Actual payout state, not vibes
           </h2>
           <p className="mt-1 text-sm text-slate-400">
-            Pending, auto-settled, claimed, rescinded, tx hash, and failure breadcrumbs.
+            Wallet-link waits, settled payouts, rescinds, tx proof, and failure breadcrumbs.
           </p>
         </div>
 
@@ -248,10 +323,13 @@ export function WoloSettlementRail({
           ) : null}
 
           <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 xl:grid-cols-6">
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-              <div className="text-slate-400">Pending</div>
+            <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 px-3 py-2">
+              <div className="text-amber-200">Pending wallet links</div>
               <div className="mt-1 font-medium text-white">
                 {summary.pendingCount} · {formatWolo(summary.pendingAmountWolo)} WOLO
+              </div>
+              <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-amber-200/70">
+                {pendingWalletLinkPlayerCount} player{pendingWalletLinkPlayerCount === 1 ? "" : "s"} waiting
               </div>
             </div>
             <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
@@ -285,6 +363,38 @@ export function WoloSettlementRail({
               </div>
             </div>
           </div>
+
+          {topPendingWalletPlayers.length > 0 ? (
+            <div className="w-full max-w-xl rounded-2xl border border-amber-300/20 bg-amber-400/10 p-3 text-xs text-amber-50">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-amber-200/70">
+                    Pending wallet links
+                  </div>
+                  <div className="mt-1 font-medium text-white">
+                    {pendingWalletLinkRows.length} claims · {formatWolo(pendingWalletLinkAmountWolo)} WOLO
+                  </div>
+                </div>
+                <div className="rounded-full border border-amber-200/20 bg-black/20 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-amber-100">
+                  player action needed
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-1.5">
+                {topPendingWalletPlayers.map((player) => (
+                  <div
+                    key={player.name}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2"
+                  >
+                    <span className="truncate text-slate-100">{player.name}</span>
+                    <span className="shrink-0 font-medium text-amber-100">
+                      {formatWolo(player.amountWolo)} WOLO
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -319,7 +429,11 @@ export function WoloSettlementRail({
                       ? "rescinded"
                       : isAwaitingWalletLink(row)
                         ? "awaiting_wallet_link"
-                        : isRetryableSettlementFailure(row)
+                        : isSettlementUnavailable(row, payoutExecutionConfigured)
+                          ? "settlement_unavailable"
+                          : requiresAdminReview(row)
+                            ? "review_required"
+                          : isRetryableSettlementFailure(row)
                           ? "retryable_failure"
                           : row.settlementMode;
 
@@ -355,7 +469,7 @@ export function WoloSettlementRail({
                       ) : null}
                       {isAwaitingWalletLink(row) ? (
                         <span className="inline-flex rounded-full border border-amber-300/20 bg-amber-400/10 px-2.5 py-1 text-[11px] uppercase tracking-[0.16em] text-amber-100">
-                          Awaiting verified wallet-linked account
+                          Pending wallet link
                         </span>
                       ) : null}
                       {isRetryableSettlementFailure(row) ? (
@@ -363,10 +477,28 @@ export function WoloSettlementRail({
                           Retryable settlement failure
                         </span>
                       ) : null}
+                      {requiresAdminReview(row) ? (
+                        <span className="inline-flex rounded-full border border-fuchsia-300/20 bg-fuchsia-400/10 px-2.5 py-1 text-[11px] uppercase tracking-[0.16em] text-fuchsia-100">
+                          Duplicate guard review
+                        </span>
+                      ) : null}
+                      {isSettlementUnavailable(row, payoutExecutionConfigured) ? (
+                        <span className="inline-flex rounded-full border border-cyan-300/20 bg-cyan-400/10 px-2.5 py-1 text-[11px] uppercase tracking-[0.16em] text-cyan-100">
+                          Settlement service/signers unavailable
+                        </span>
+                      ) : null}
                     </div>
-                    {pendingDetail(row) ? (
-                      <div className={`mt-2 text-xs ${isAwaitingWalletLink(row) ? "text-amber-200" : "text-rose-300"}`}>
-                        {pendingDetail(row)}
+                    {pendingDetail(row, payoutExecutionConfigured) ? (
+                      <div
+                        className={`mt-2 text-xs ${
+                          isAwaitingWalletLink(row)
+                            ? "text-amber-200"
+                            : isSettlementUnavailable(row, payoutExecutionConfigured)
+                              ? "text-cyan-100"
+                              : "text-rose-300"
+                        }`}
+                      >
+                        {pendingDetail(row, payoutExecutionConfigured)}
                       </div>
                     ) : null}
                   </td>
@@ -375,6 +507,9 @@ export function WoloSettlementRail({
                     <div className="font-medium text-white">{row.winnerName || "—"}</div>
                     <div className="mt-1 text-xs text-slate-400">target {row.displayPlayerName}</div>
                     <div className="mt-1 text-xs text-slate-500">claim #{row.id}</div>
+                    {row.sourceGameStatsId ? (
+                      <div className="mt-1 text-xs text-slate-500">game #{row.sourceGameStatsId}</div>
+                    ) : null}
                   </td>
 
                   <td className="px-3 py-3">
@@ -453,7 +588,12 @@ export function WoloSettlementRail({
                     <td className="px-3 py-3">
                       {row.claimStatus === "pending" ? (
                         <div className="flex flex-wrap gap-2">
-                          {row.errorState && onRetry ? (
+                          {row.errorState &&
+                          onRetry &&
+                          payoutExecutionConfigured &&
+                          !requiresAdminReview(row) &&
+                          !isAwaitingWalletLink(row) &&
+                          !isSettlementUnavailable(row, payoutExecutionConfigured) ? (
                             <button
                               type="button"
                               onClick={() => onRetry(row.id)}
@@ -462,10 +602,25 @@ export function WoloSettlementRail({
                             >
                               {retryingClaimId === row.id
                                 ? "Retrying..."
-                                : isAwaitingWalletLink(row)
-                                  ? "Retry after link"
-                                  : "Retry payout"}
+                                  : isAwaitingWalletLink(row)
+                                    ? "Retry after link"
+                                    : "Retry payout"}
                             </button>
+                          ) : null}
+                          {onRetry && isAwaitingWalletLink(row) ? (
+                            <span className="rounded-full border border-amber-300/25 bg-amber-400/10 px-3 py-1.5 text-xs font-medium text-amber-100">
+                              Waiting on player link
+                            </span>
+                          ) : null}
+                          {onRetry && isSettlementUnavailable(row, payoutExecutionConfigured) ? (
+                            <span className="rounded-full border border-cyan-300/25 bg-cyan-400/10 px-3 py-1.5 text-xs font-medium text-cyan-100">
+                              Configure mainnet settlement
+                            </span>
+                          ) : null}
+                          {requiresAdminReview(row) ? (
+                            <span className="rounded-full border border-fuchsia-300/25 bg-fuchsia-400/10 px-3 py-1.5 text-xs font-medium text-fuchsia-100">
+                              Review before retry
+                            </span>
                           ) : null}
                           {row.marketId && onAddFounderBonus ? (
                             <>

@@ -1,4 +1,6 @@
 export const TILE_VIEW_STORAGE_KEY = "aoe2dewarwagers:tile-view-preferences";
+export const TILE_VIEW_DEFAULT_VERSION_KEY = "aoe2dewarwagers:tile-view-default-version";
+export const TILE_VIEW_DEFAULT_VERSION = "2026-06-15-extreme-community-lobby";
 
 export const TILE_VIEW_KEYS = [
   "community_lobby",
@@ -6,7 +8,7 @@ export const TILE_VIEW_KEYS = [
   "wolo_overview",
 ] as const;
 
-export const TILE_VIEW_MODES = ["basic", "advanced"] as const;
+export const TILE_VIEW_MODES = ["basic", "advanced", "extreme"] as const;
 
 export type TileViewKey = (typeof TILE_VIEW_KEYS)[number];
 export type TileViewMode = (typeof TILE_VIEW_MODES)[number];
@@ -14,6 +16,9 @@ export type TileViewPreferences = Partial<Record<TileViewKey, TileViewMode>>;
 
 const TILE_VIEW_KEY_SET = new Set<string>(TILE_VIEW_KEYS);
 const TILE_VIEW_MODE_SET = new Set<string>(TILE_VIEW_MODES);
+const DEFAULT_TILE_VIEW_MODES: TileViewPreferences = {
+  community_lobby: "extreme",
+};
 
 export function isTileViewKey(value: string | null | undefined): value is TileViewKey {
   return Boolean(value && TILE_VIEW_KEY_SET.has(value));
@@ -42,7 +47,7 @@ export function getTileViewMode(
   preferences: TileViewPreferences | null | undefined,
   tileKey: TileViewKey
 ): TileViewMode {
-  return preferences?.[tileKey] ?? "basic";
+  return preferences?.[tileKey] ?? DEFAULT_TILE_VIEW_MODES[tileKey] ?? "basic";
 }
 
 export function setTileViewPreference(
@@ -66,6 +71,37 @@ export function readStoredTileViewPreferences(): TileViewPreferences {
     return normalizeTileViewPreferences(value ? JSON.parse(value) : null);
   } catch {
     return {};
+  }
+}
+
+export function applyTileViewDefaultMigration(preferences: TileViewPreferences): TileViewPreferences {
+  if (typeof window === "undefined") {
+    return preferences;
+  }
+
+  try {
+    if (window.localStorage.getItem(TILE_VIEW_DEFAULT_VERSION_KEY) === TILE_VIEW_DEFAULT_VERSION) {
+      return preferences;
+    }
+  } catch {
+    return preferences;
+  }
+
+  return {
+    ...preferences,
+    community_lobby: "extreme" as const,
+  };
+}
+
+export function markTileViewDefaultMigrationApplied() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(TILE_VIEW_DEFAULT_VERSION_KEY, TILE_VIEW_DEFAULT_VERSION);
+  } catch {
+    // Ignore private-mode/localStorage failures. The runtime defaults still render.
   }
 }
 

@@ -8,16 +8,72 @@ import { readWatcherDownloadIpAddress, readWatcherDownloadUserAgent } from "@/li
 
 export const WATCHER_CLIENT_EVENT_TYPES = [
   "app_open",
+  "watcher_started",
+  "watcher_stopped",
+  "watcher_version_seen",
+  "watcher_update_check_started",
+  "watcher_update_available",
+  "watcher_update_not_available",
+  "watcher_update_downloaded",
+  "watcher_update_error",
+  "watcher_update_install_requested",
+  "watcher_update_install_started",
   "auth_started",
   "auth_success",
   "auth_failed",
   "watch_folder_selected",
+  "watching_started",
+  "watching_stopped",
+  "watcher_ready",
+  "watcher_error",
+  "monitor_start",
+  "monitor_stop",
+  "monitor_skip_final",
   "replay_detected",
+  "replay_detected_ignored",
+  "skip_unknown",
+  "skip_upload_in_progress",
+  "skip_file_missing",
+  "skip_file_too_small",
+  "skip_already_finalized",
+  "file_size_progress",
+  "waiting_for_minimum_size",
   "upload_attempted",
+  "upload_retry",
   "upload_succeeded",
   "upload_failed",
   "parse_succeeded",
+  "parse_pending",
   "parse_failed",
+  "parse_result_unknown_fields",
+  "final_candidate_ready",
+  "final_candidate_accepted",
+  "final_candidate_deferred",
+  "final_candidate_reopened",
+  "batch_upload_started",
+  "batch_upload_scanned",
+  "batch_upload_file_started",
+  "batch_upload_file_stable",
+  "batch_upload_file_skipped",
+  "batch_upload_file_succeeded",
+  "batch_upload_file_failed",
+  "batch_upload_finished",
+  "batch_upload_failed",
+  "stream_handoff_opened",
+  "stream_sources_listed",
+  "stream_capture_requested",
+  "stream_preview_started",
+  "stream_source_ready",
+  "stream_started",
+  "stream_chunk_uploaded",
+  "stream_chunk_dropped",
+  "stream_heartbeat",
+  "stream_stopped",
+  "stream_track_ended",
+  "stream_recorder_error",
+  "stream_chunk_failed",
+  "stream_heartbeat_failed",
+  "stream_error",
   "heartbeat",
 ] as const;
 
@@ -41,6 +97,10 @@ type WatcherIdentity = {
   userId: number | null;
   userUid: string | null;
   resolved: boolean;
+};
+
+type WatcherIdentityOptions = {
+  touchLastUsedAt?: boolean;
 };
 
 const WATCHER_KEY_RE = /^wolo_([a-f0-9]{12})_(.+)$/i;
@@ -122,7 +182,8 @@ function verifyWatcherKeyHash(apiKey: string, storedHash: string) {
 
 export async function resolveWatcherTelemetryIdentity(
   prisma: PrismaClient,
-  apiKey: string | null | undefined
+  apiKey: string | null | undefined,
+  options: WatcherIdentityOptions = {}
 ): Promise<WatcherIdentity> {
   const normalized = apiKey?.trim() || "";
   const match = normalized.match(WATCHER_KEY_RE);
@@ -152,10 +213,12 @@ export async function resolveWatcherTelemetryIdentity(
     return { userId: null, userUid: null, resolved: false };
   }
 
-  await prisma.apiKey.update({
-    where: { id: apiKeyRow.id },
-    data: { lastUsedAt: new Date() },
-  });
+  if (options.touchLastUsedAt !== false) {
+    await prisma.apiKey.update({
+      where: { id: apiKeyRow.id },
+      data: { lastUsedAt: new Date() },
+    });
+  }
 
   return {
     userId: apiKeyRow.user.id,

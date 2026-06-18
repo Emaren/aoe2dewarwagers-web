@@ -11,6 +11,7 @@ The app is no longer just a replay/stat shell. It now has a real public product 
 - next tournament panel is shipped and usable
 - players, rivalries, requests, `$WOLO`, and live-game surfaces are all real navigation destinations
 - `/bets`, `/war-chest`, and tournament detail pages are now real public destinations too
+- `/kingdom`, `/champions`, `/national-champions`, and `/forum` are now public AoE2DE War Wagers-style league/community destinations, with `/belts`, `/nations`, and `/realm` redirecting into them
 - live replay ingestion can feed visible match outcomes back into the product without the old obviously-broken feel
 
 ## Strongest shipped modules
@@ -20,6 +21,10 @@ The app is no longer just a replay/stat shell. It now has a real public product 
 Current strengths:
 - premium dark/gold/blue theme system with 7 theme circles
 - `/lobby` now feels like a real destination, not filler
+- `/lobby` now defaults to Advanced view with a moving live ticker, Watch & Chat arena hero with comments on the right, reactions plus a compact bet slip below the video, a compact WOLO swap tile, and the existing Community Lobby pushed below the arena stack
+- Basic view remains available behind the lobby toggle and keeps the simpler leaderboard/tournament/war-chest-first layout intact
+- admin-created text ticker messages are managed from `/admin` and combine with system ticker items from tournament, replay, lobby, and WOLO market state
+- the Advanced Watch & Chat hero prefers real live-game/session data, then recent completed sessions, then the latest verified replay or next tournament state; its embedded bet slip reads `/api/bets` and hands wager locking to `/bets`
 - leaderboard is shipped into the lobby surface
 - leaderboard count now matches rendered entries
 - leaderboard cards feel premium and readable
@@ -61,11 +66,27 @@ Current strengths:
 - less clutter than earlier versions
 - directory now fits the broader lobby/leaderboard product better
 
+### Individual player pages
+
+Current strengths:
+- `/players/[uid]` and `/players/by-name/[name]` now share one command-center profile renderer
+- claimed player pages default to the Advanced command-center surface, while unclaimed replay-built player pages default to the classic Basic claim surface; both account types can toggle Basic/Advanced without changing their natural default URL
+- the Advanced profile has a compact hero, live ticker, command deck, deeper red/green form/status treatment, resource emblems, civ/map breakdowns, best-game rail, rivalry rail, watcher proof, AI Scribe/Grimer readout, stream signal, and premium `$WOLO` logo/flex/staking rail
+- Match Feed is now a scrollable replay archive backed by `/api/player-profile/matches`, with lazy loading so older manual uploads can be reached instead of being trapped outside the initial page
+- economy/resource display is honest: total food/wood/gold/stone and best resource games show when stored replay achievement/economy values exist, and otherwise render as gated/fog instead of invented numbers
+- optional WOLO/community profile rails degrade to zero/empty when a migration-era table is unavailable, so a public player page should not white-screen because one side rail is missing
+- live-game session cards now aggregate watcher uploaders per session and show single, dual, or stacked watcher coverage instead of awkwardly competing uploader chips
+
 ### Rivalries / broader public shell
 
 Current strengths:
 - rivalries are a real top-level destination
 - public navigation now has enough surface area to feel like an ecosystem
+- the Kingdom dropdown gives the top nav a broader world layer: The Kingdom, Champions, Nations, and Forum
+- `/kingdom` tells the app-side chronicle/wealth story without pretending to own WoloChain truth
+- `/champions` is the championship-belt surface for world, chaos, tag, women, ELO, and designation titles
+- `/national-champions` is the national-beacon surface with claimed and vacant country titles
+- `/forum` is a public War Room shell for community energy, featured threads, champion activity, and WOLO-adjacent calls to action
 - the site answers “what else can I do here?” better than before
 - overall product identity is stronger than the earlier explainer-heavy versions
 
@@ -81,20 +102,19 @@ Current strengths:
 
 Current strengths:
 - can inspect users
-- can award badges/gifts
+- `/admin/user-list` has top-level operator navigation for Admin Home, Media Assets, WoloChain, and the User List / Command Tower
+- can award badges/gifts, with the badge panel now presented as Honors
+- Honors Phase 3A can grant/remove Badges, Belts, Artifacts, and Designations from `/admin/user-list`
+- Honors Phase 3A reuses the existing `user_badges` table with typed labels such as `Belt: ...`, `Artifact: ...`, and `Designation: ...`; no new migration was added
+- public Honors display is intentionally limited to the existing profile/community badge-pill rail when an honor is public, accepted, and displayable; richer belt/artifact profile layout is Phase 3B
 - can see inbox/unread/honor state
-- can see appearance preferences and recent actions
+- can see appearance preferences, including exact Community Lobby mode labels for Basic, Advanced, and Extreme
+- can see a compact app-local Journey Summary per user, inspired by Traffic session ideas but built from AoE2DE War Wagers `UserActivityEvent` rows
+- can triage Journey Intelligence with client-side engagement filters, search, sort controls, summary counts, and an expandable per-user Journey Details panel without loading full histories upfront
+- recent actions stay in a fixed-height pane and lazy-load older rows through an IntersectionObserver sentinel instead of a manual Next 50 button
 - operator control surface is real, not fake scaffolding
 
 ## Still unfinished
-
-### Individual player pages
-
-Need another pass:
-- `/players/[uid]`
-- `/players/by-name/[name]`
-
-They work, but they are not yet as sharp as the community lobby, leaderboard, or directory.
 
 ### Rankings depth
 
@@ -129,20 +149,39 @@ Current state:
 - gifts exist in app logic
 - token rail is visible in product language and navigation
 - wallet snapshot is the right-rail anchor on `/wolo`, with the tight `WOLO Market` tile living directly below it and the starter faucet claim strip tucked underneath
+- `/lobby` now presents the WOLO / USDC Osmosis 3461 market tile in Advanced view as a logo/price/swap surface, deriving `1 WOLO` price from the live pool unless `WOLO_USD_PRICE` explicitly overrides it
 - `/wolo` now has a real app-side starter faucet claim route that sends `2 WOLO`, enforces a 24-hour cooldown, and updates the wallet snapshot from the returned balance
 - default `/wolo` hero keeps the simpler legacy action row, while premium mode uses the two-lane action dock with borderless utility pills so `Open Ping.pub` stays grouped without a harsh white outline treatment
 - default WOLO runtime/daemon consoles stay in the raw matrix style without per-line separators, but the stat-card labels/values use the normal slate/white treatment again; premium runtime/daemon consoles keep the darker structured shell
 - Keplr wallet state now persists across route changes instead of acting page-local
-- `/bets` now opens a real signed WOLO stake path when escrow env is configured, and the wager is only accepted after the stake tx verifies against WoloChain REST
+- `/bets` now requires the real signed WOLO stake path on `wolo-1`; wagers are only accepted after the stake tx verifies against WoloChain REST
+- mainnet-facing WOLO/bet rails hide pre-mainnet testnet-era rows and app-only wagers, so profile ledgers, staking fee stats, war-chest totals, `/bets`, and admin WoloChain rails only count Keplr-verified mainnet stakes
+- `/staking` mainnet display is tx-backed: public totals, personal stake, leaderboards, and reward weights are derived from indexed WoloChain `MsgSend` rows to/from the configured staking wallet plus confirmed app staking events with verified `wolo-1` tx hashes on/after the mainnet display start. Legacy `staking_positions` rows are not public mainnet truth.
+- `/staking` personal rewards now read unpaid mainnet reward allocations first, then show the modeled unpaid fee-share estimate from settled signed wagers until the daily distribution runner creates allocation rows.
+- `/staking` also exposes public custody balance cards for staking wallet, community treasury, bet escrow, payout signer, and DEX liquidity; these render real WoloChain bank balances and should show `0.00 WOLO` when the configured wallet is empty.
+- mainnet direct transfers are indexed in `wolo_indexed_transfers`, surfaced at `/api/wolo/mainnet-transfers`, and refreshed through the admin backfill route or `scripts/backfill-wolo-mainnet-transfers.mjs`.
+- `/bets` now records pre-intent Keplr/Ledger wallet failures as `bet_wallet_error` activity events, so operator/debug history includes failures that happen before a stake intent can exist
+- `/bets` now keeps recent no-proof stake intents visible in Your Book and gives the server 24 hours to discover matching WoloChain escrow deposits for tx-landed/browser-lost recovery
+- AoE2DE War Wagers browser streaming now exists as the first-party path: signed-in users can pick a window/display from `/profile` or a watcher-bound `/watch/[sessionKey]`, the app records `aoe2war` browser stream sessions in `game_watch_streams`, stores short WebM chunks under runtime stream storage, and surfaces rolling live thumbnails/playback on `/`, `/watch`, `/bets`, `/live-games`, and the lobby Watch & Chat hero. The streamer studio now recovers an active stream after reload, shows compact binding/signal/uptime/chunk stats, exposes Sharp/Stable/Display capture modes, records stream capture/recorder/heartbeat failures into watcher telemetry, keeps watcher-linked theatre/copy actions visible, and accepts watcher handoff params through `/profile?watcher_stream=1&stream_session=...&stream_title=...`. Desktop watcher `1.5.0` adds native watcher streaming, display-first macOS/CrossOver full-screen guidance, rolling playback support, compact control-room UI, and safer update handling. Current DE beta packages remain unsigned, with manual replacement on macOS and possible SmartScreen prompts on Windows. Twitch/YouTube stay as external fallback feeds, not the primary product path.
+- challenge-linked `/bets` markets now merge safe duplicate `watcher-live-*` shadows for the same live/completed session into the canonical challenge book, including wagers, stake intents, wallet locks, founder bonuses, and claim breadcrumbs
+- the recent settled-results rail dedupes by linked session and prefers the challenge-linked market over watcher shadows
+- `/admin/wolochain` now shows a wallet-friction rail for recent Keplr/Ledger stake failures, and `/admin/user-list` surfaces the last-24h count in the WoloChain entry tile
 - winning payouts can now auto-settle on-chain for trusted wallet-linked winners, with tx hashes visible in the admin settlement rail
+- payout claims now have a distinct-send guard: before a claim row is marked `claimed`, the returned tx must contain a matching WoloChain `MsgSend` for that recipient and amount, and a reused tx hash must have enough distinct matching sends for every claimed row using it
+- public betting and war-chest rails now translate payout reserve-floor/config blockers into player-safe operator top-up language; raw settlement health codes and signer-balance math stay in admin/operator surfaces
+- `/admin/wolochain` now includes duplicate-tx diagnostics and indexed-transfer gap diagnostics, separating verified mainnet multi-payouts from suspicious mainnet duplicates, legacy testnet single-send duplicates, and REST-not-found rows
+- `/profile` now presents WOLO ledger rows newest-first, labels confirmed mainnet transfers separately from app-side pending/retry claim rows, filters old testnet claim rows out of mainnet accounting, and flags duplicate/suspicious claim tx groups
+- pending settlement activity groups no-tx child claims by market, so the public activity feed shows one honest settlement-debt row per market without pretending it is a chain transaction
+- `/admin/wolochain` also includes an Admin Watcher Diagnostics rail with per-user app version, platform, artifact, last heartbeat, replay files/hashes, parsed/unparsed finals, upload failures, parse failures, and replay-file rollups
 - unmatched or failed payouts still fall back into the pending-claim/admin rescue rail instead of vanishing
 
 ### Replay trust / postgame depth
 
 Current state:
 - parser now captures much more replay metadata
-- DE replay/runtime metadata is surfaced when parser support allows it
+- official DE rating snapshots are surfaced
 - normal live-to-final behavior looks materially healthier than before
+- watcher final uploads that hit an MGZ full-summary decoding edge can now fall back to header-only parser metadata instead of disappearing as repeated generic parse failures; those rows keep explicit `header_only_summary_fallback` / `header_only_fallback` breadcrumbs and do not invent winners or postgame economy
 - exact postgame achievement tabs still are not solved
 
 If exact score/economy/military tables matter, likely next step is:
@@ -182,44 +221,47 @@ Current state:
 - one-sided winner bounties and two-sided pot payouts are now being pushed through the chain-backed settlement rail on the happy path
 
 Still wanted:
-- signed-but-unrecorded stake recovery/reconciliation if a user finishes the wallet tx but the app misses the wager write
-- tighter Ledger/browser guidance and clearer surfaced errors before the broadcast stage dies
+- more recovery/reconciliation coverage for edge cases where the wallet tx lands but the browser misses both the wager write and local recovery update
+- tighter Ledger/browser guidance before the broadcast stage dies
 - one consistent market lifecycle so scheduled, live, and just-finished versions of the same match never feel like different books
 - remove or further de-emphasize fallback synthetic books when the challenge slate is rich enough
 
 ## Current known product rough edges
 
-- player profile pages lag behind directory and lobby polish
+- player profile pages are now premium, but the resource/economy rail is only as complete as captured postgame achievement data
 - tournament presentation is good, but not yet “must-watch”
+- Watch & Chat reactions are intentionally lightweight/local for now; the right-side hero comments reuse the public lobby messages, the hero bet slip is a `/bets` handoff, and persistent match-scoped comments need a dedicated context table or reuse plan before they become durable product state
 - leaderboard is now real, but deeper ranking semantics still need tightening
 - some surfaces still carry more explanatory copy than ideal
-- token rail is now partially real, but stake recovery and pre-submit signer telemetry are still behind the rest of the UX
-- challenge-derived bet markets are much healthier than before, but fast-finish lifecycle edge cases and duplicate-looking settled rows still need cleanup
+- token rail is now partially real, but live wallet edge cases still need hardening
+- mainnet transfer indexing can still miss a directly provable tx; the admin index-gap diagnostic now flags those cases so operators can rerun/expand the mainnet transfer backfill instead of treating the app ledger as chain truth
+- challenge-derived bet markets are much healthier than before, but long-tail parser/session label mismatches still need operator visibility
 - exact postgame achievement extraction is still the big missing depth layer
 - watcher behavior works better than before, but still feels somewhat noisy under the hood
 
 ## Current rough scorecard
 
-- Community Lobby / homepage spine: `9.6/10`
+- Community Lobby / homepage spine: `9.7/10`
 - Leaderboard surface: `9.4/10`
 - Players directory: `9.2/10`
+- Individual player pages: `9.3/10`
 - Rivalries / public shell: `8.9/10`
 - Tournament panel / lobby integration: `8.8/10`
-- Individual player pages: `7.3/10`
 - Contact / inbox: `8.9/10`
 - Admin dashboard: `8.8/10`
 - Replay parser / metadata capture: `8.5/10`
 - Live replay → visible product loop: `8.9/10`
+- AoE2DE War Wagers browser streaming loop: `8.0/10`
 - Exact postgame achievement capture: `4.2/10`
 - Deploy reliability: `8.8/10`
 - Docs / architecture truth: improving, but still worth maintaining intentionally
 
 ## Best next moves
 
-1. Stake recovery / escrow reconciliation for signed txs that do not finish recording cleanly
-2. Capture and surface exact Keplr/Ledger failure breadcrumbs before the wager API is even hit
-3. Tighten scheduled/live/settled market lifecycle so the book never disappears prematurely
-4. Premium pass on individual player pages
-5. Improve tournament gravity, bracket storytelling, and event visibility
-6. Tune watcher/runtime behavior now that final parse behavior looks healthier
+1. Improve tournament gravity, bracket storytelling, and event visibility
+2. Deepen exact postgame achievement/economy extraction so resource rails can fill every game
+3. Tune watcher/runtime behavior now that final parse behavior looks healthier
+4. Move streaming distribution from the first-party WebM chunk rail to a purpose-built media provider or watcher-native ingest once real audience size appears
+5. Add operator visibility for skipped challenge/watcher merges when parser labels do not safely map
+6. Keep hardening live wallet edge cases around Keplr/Ledger handoff and signer/browser failures
 7. Clean API testing workflow and keep docs aligned with the now-real WOLO betting rails

@@ -3,6 +3,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 
 const FEATURE_CHIPS = [
   "Windows installer",
@@ -10,6 +11,12 @@ const FEATURE_CHIPS = [
   "macOS DMG + ZIP",
   "Linux AppImage",
   "Historical replay import",
+  "Watcher-native streaming",
+  "Full-screen capture mode",
+  "1s live chunks",
+  "Upload backpressure",
+  "Rolling playback",
+  "Faster final detection",
 ];
 
 const WATCHER_RELEASE_TEMPLATE = ({ version, releasedOn }) => `export type WatcherArtifactPlatform = "windows" | "macos" | "linux";
@@ -40,7 +47,7 @@ export const WATCHER_RELEASE = {
   version: ${JSON.stringify(version)},
   label: ${JSON.stringify(`AoE2DEWarWagers Watcher ${version}`)},
   releasedOn: ${JSON.stringify(releasedOn)},
-  signingStatus: "Unsigned builds for now",
+  signingStatus: "Unsigned beta builds",
   featureChips: ${JSON.stringify(
     [`AoE2DEWarWagers Watcher ${version}`, releasedOn, ...FEATURE_CHIPS],
     null,
@@ -61,7 +68,7 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
       "Smoothest Windows path. Installs cleanly, creates shortcuts, and keeps the first run obvious.",
     downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2DEWarWagers Watcher Setup ${version}.exe`)}`)},
     trackedHref: "/download/watcher/windows-installer",
-    primary: false,
+    primary: true,
     featuredOnDownloadPage: true,
   },
   {
@@ -73,7 +80,7 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
     filename: ${JSON.stringify(`AoE2DEWarWagers Watcher ${version}.exe`)},
     format: "portable",
     description:
-      "Same watcher core in a no-installer package if SmartScreen or installer policy gets in the way.",
+      "Same Windows watcher core in a no-installer package if installer policy gets in the way.",
     downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2DEWarWagers Watcher ${version}.exe`)}`)},
     trackedHref: "/download/watcher/windows-portable",
     primary: false,
@@ -91,7 +98,7 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
       "Best Mac install path. Drag in, pair once, and keep it open while AoE2DE runs under macOS or CrossOver.",
     downloadPath: ${JSON.stringify(`/downloads/${encodeURIComponent(`AoE2DEWarWagers Watcher-${version}-arm64.dmg`)}`)},
     trackedHref: "/download/watcher/mac-dmg",
-    primary: true,
+    primary: false,
     featuredOnDownloadPage: true,
   },
   {
@@ -155,17 +162,49 @@ async function ensureFileExists(filePath) {
   await fs.access(filePath);
 }
 
-async function copyArtifact(sourcePath, targetPath, { required = false } = {}) {
+async function copyArtifact(sourcePath, targetPath, { optional = false } = {}) {
   try {
     await ensureFileExists(sourcePath);
   } catch (error) {
-    if (required) throw error;
-    process.stdout.write(`Skipping missing optional watcher artifact: ${sourcePath}\n`);
-    return false;
+    if (optional) {
+      process.stdout.write(`Skipped optional watcher artifact: ${sourcePath}\n`);
+      return false;
+    }
+
+    throw error;
   }
 
   await fs.copyFile(sourcePath, targetPath);
   return true;
+}
+
+async function fileSha512Base64(filePath) {
+  const file = await fs.readFile(filePath);
+  return crypto.createHash("sha512").update(file).digest("base64");
+}
+
+async function writeMacUpdateMetadata({ watcherDistDir, downloadsDir, version }) {
+  const dmgFilename = `AoE2DEWarWagers Watcher-${version}-arm64.dmg`;
+  const dmgPath = path.join(watcherDistDir, dmgFilename);
+  const latestMacPath = path.join(downloadsDir, "latest-mac.yml");
+  const stats = await fs.stat(dmgPath);
+  const sha512 = await fileSha512Base64(dmgPath);
+
+  await fs.writeFile(
+    latestMacPath,
+    [
+      `version: ${version}`,
+      "files:",
+      `  - url: ${dmgFilename}`,
+      `    sha512: ${sha512}`,
+      `    size: ${stats.size}`,
+      `path: ${dmgFilename}`,
+      `sha512: ${sha512}`,
+      `releaseDate: '${new Date(stats.mtimeMs).toISOString()}'`,
+      "",
+    ].join("\n"),
+    "utf8"
+  );
 }
 
 async function main() {
@@ -210,30 +249,41 @@ async function main() {
     {
       source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg`),
       target: path.join(downloadsDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg`),
-      required: true,
+    },
+    {
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers-Watcher-${version}-arm64.dmg`),
     },
     {
       source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg.blockmap`),
       target: path.join(downloadsDir, `AoE2DEWarWagers Watcher-${version}-arm64.dmg.blockmap`),
-      required: true,
     },
     {
-      source: path.join(watcherDistDir, "latest-mac.yml"),
-      target: path.join(downloadsDir, "latest-mac.yml"),
-      required: true,
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}-arm64-mac.zip`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers Watcher-${version}-arm64-mac.zip`),
+      optional: true,
     },
     {
-      source: path.join(watcherDistDir, "AoE2DEWarWagers-watcher-direct.zip"),
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}-arm64-mac.zip.blockmap`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers Watcher-${version}-arm64-mac.zip.blockmap`),
+      optional: true,
+    },
+    {
+      source: path.join(watcherDistDir, "aoe2dewarwagers-watcher-direct.zip"),
       target: path.join(downloadsDir, "AoE2DEWarWagers-watcher-direct.zip"),
-      required: true,
     },
     {
       source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher Setup ${version}.exe`),
       target: path.join(downloadsDir, `AoE2DEWarWagers Watcher Setup ${version}.exe`),
     },
     {
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher Setup ${version}.exe`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers-Watcher-Setup-${version}.exe`),
+    },
+    {
       source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher Setup ${version}.exe.blockmap`),
       target: path.join(downloadsDir, `AoE2DEWarWagers Watcher Setup ${version}.exe.blockmap`),
+      optional: true,
     },
     {
       source: path.join(watcherDistDir, "latest.yml"),
@@ -247,11 +297,23 @@ async function main() {
       source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}.AppImage`),
       target: path.join(downloadsDir, `AoE2DEWarWagers Watcher-${version}.AppImage`),
     },
+    {
+      source: path.join(watcherDistDir, `AoE2DEWarWagers Watcher-${version}.AppImage`),
+      target: path.join(downloadsDir, `AoE2DEWarWagers-Watcher-${version}.AppImage`),
+    },
+    {
+      source: path.join(watcherDistDir, "latest-linux.yml"),
+      target: path.join(downloadsDir, "latest-linux.yml"),
+    },
   ];
 
   for (const artifact of artifactCopies) {
-    await copyArtifact(artifact.source, artifact.target, { required: artifact.required });
+    await copyArtifact(artifact.source, artifact.target, {
+      optional: artifact.optional,
+    });
   }
+
+  await writeMacUpdateMetadata({ watcherDistDir, downloadsDir, version });
 
   process.stdout.write(
     `Synced watcher release AoE2DEWarWagers Watcher ${version} into ${downloadsDir}\n`

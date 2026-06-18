@@ -81,12 +81,20 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="bg-[#050814] text-white min-h-screen flex flex-col">
+    <html lang="en" suppressHydrationWarning>
+      <body
+        className="bg-[#050814] text-white min-h-screen flex flex-col"
+        suppressHydrationWarning
+      >
         <Script
           defer
           data-domain="aoe2dewarwagers.com"
           src="https://plausible.io/js/script.js"
+        />
+        <Script
+          defer
+          src="https://traffic.tokentap.ca/api/beacon.js"
+          data-project="aoe2dewarwagers"
         />
         <AppShell>{children}</AppShell>
         <PwaRegister />

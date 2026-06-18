@@ -113,7 +113,7 @@ export function WatchPreviewScreen({
 
       <div className="pointer-events-none absolute left-3 top-3 z-30 flex items-center gap-2">
         <span className="rounded-full border border-white/15 bg-black/55 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-white shadow-lg backdrop-blur">
-          AOE2DE
+          AOE2HD
         </span>
 
         {badge ? (

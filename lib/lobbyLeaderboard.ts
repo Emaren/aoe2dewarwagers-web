@@ -18,6 +18,12 @@ const BASE_ARENA_ELO = 1500;
 const ARENA_ELO_K_FACTOR = 32;
 const LEADERBOARD_GAME_WINDOW = 5000;
 
+export type LoadLobbyLeaderboardOptions = {
+  offset?: number;
+  limit?: number;
+  includePendingClaimed?: boolean;
+};
+
 type PreparedLeaderboardGame = {
   winner: string | null;
   players: ReturnType<typeof parsePlayers>;
@@ -74,8 +80,8 @@ function buildEnrichedEntry(entry: PublicPlayerDirectoryEntry): EnrichedLeaderbo
     winRate: resolvedMatches > 0 ? entry.wins / resolvedMatches : 0,
     lastPlayedAtMs: entry.lastPlayedAt ? new Date(entry.lastPlayedAt).getTime() : 0,
     arenaElo: BASE_ARENA_ELO,
-    pendingWoloClaimCount: 0,
-    pendingWoloClaimAmount: 0,
+    pendingWoloClaimCount: entry.pendingWoloClaimCount || 0,
+    pendingWoloClaimAmount: entry.pendingWoloClaimAmount || 0,
   };
 }
 
@@ -142,7 +148,9 @@ function compareLeaderboardEntries(left: EnrichedLeaderboardEntry, right: Enrich
   return left.name.localeCompare(right.name);
 }
 
-function buildLeaderboardSelection(entries: EnrichedLeaderboardEntry[]) {
+const LOBBY_LEADERBOARD_INITIAL_ENTRY_LIMIT = 80;
+
+function buildLeaderboardSelection(entries: EnrichedLeaderboardEntry[], options: LoadLobbyLeaderboardOptions = {}) {
   const eligibleEntries = entries
     .filter((entry) => entry.totalMatches >= LOBBY_LEADERBOARD_MIN_MATCHES)
     .sort(compareLeaderboardEntries);
@@ -165,7 +173,44 @@ function buildLeaderboardSelection(entries: EnrichedLeaderboardEntry[]) {
       return left.name.localeCompare(right.name);
     });
 
-  return { eligibleEntries, selectedEntries: [...rankedEntries, ...pendingClaimedEntries] };
+  const safeOffset = Math.max(0, Math.floor(options.offset ?? 0));
+  const safeLimit = Math.max(
+    1,
+    Math.min(200, Math.floor(options.limit ?? LOBBY_LEADERBOARD_INITIAL_ENTRY_LIMIT))
+  );
+  const includePendingClaimed = options.includePendingClaimed ?? true;
+  const orderedEntries = [...rankedEntries, ...pendingClaimedEntries];
+  const selectedByKey = new Map<string, EnrichedLeaderboardEntry>();
+
+  for (const entry of orderedEntries.slice(safeOffset, safeOffset + safeLimit)) {
+    selectedByKey.set(entry.key, entry);
+  }
+
+  if (includePendingClaimed) {
+    for (const entry of pendingClaimedEntries) {
+      selectedByKey.set(entry.key, entry);
+    }
+  }
+
+  const selectedEntries = Array.from(selectedByKey.values());
+  const rankByKey = new Map<string, number>();
+
+  rankedEntries.forEach((entry, index) => {
+    rankByKey.set(entry.key, index + 1);
+  });
+
+  pendingClaimedEntries.forEach((entry, index) => {
+    if (!rankByKey.has(entry.key)) {
+      rankByKey.set(entry.key, rankedEntries.length + index + 1);
+    }
+  });
+
+  return {
+    eligibleEntries,
+    selectedEntries,
+    rankByKey,
+    fullEntryCount: orderedEntries.length,
+  };
 }
 
 function buildAliasEntryMap(entries: EnrichedLeaderboardEntry[]) {
@@ -207,8 +252,10 @@ function applyPendingClaimSummaries(
 ) {
   for (const entry of entries) {
     const seenClaimIds = new Set<number>();
-    let pendingCount = 0;
-    let pendingAmountWolo = 0;
+
+    let pendingCount = entry.pendingWoloClaimCount || 0;
+
+    let pendingAmountWolo = entry.pendingWoloClaimAmount || 0;
 
     for (const aliasKey of entry.aliasKeys) {
       const summary = summaryMap.get(aliasKey);
@@ -415,7 +462,8 @@ function sortCandidateGamesByPlayedAtDesc(
 }
 
 export async function loadLobbyLeaderboard(
-  prisma: PrismaClient
+  prisma: PrismaClient,
+  options: LoadLobbyLeaderboardOptions = {}
 ): Promise<LobbyLeaderboardSummary> {
   const dayStart = new Date();
   dayStart.setHours(0, 0, 0, 0);
@@ -471,7 +519,7 @@ export async function loadLobbyLeaderboard(
   applyPendingClaimSummaries(candidates, pendingSummaries);
   buildArenaElo(candidates, preparedGames);
 
-  const { eligibleEntries, selectedEntries } = buildLeaderboardSelection(candidates);
+  const { eligibleEntries, selectedEntries, rankByKey, fullEntryCount } = buildLeaderboardSelection(candidates, options);
 
   return {
     title: "Season Leaderboard",
@@ -480,12 +528,12 @@ export async function loadLobbyLeaderboard(
       : eligibleEntries.length > 0
         ? "Site Elo"
         : "Need games",
-    entries: selectedEntries.map((entry, index) =>
-      toLobbyLeaderboardEntry(entry, index + 1, recentGames)
+    entries: selectedEntries.map((entry) =>
+      toLobbyLeaderboardEntry(entry, rankByKey.get(entry.key) ?? 1, recentGames)
     ),
     activePlayers: directory.activeClaimed.length,
     matchesToday,
-    trackedPlayers: selectedEntries.length,
+    trackedPlayers: fullEntryCount,
     rankedPlayers: eligibleEntries.length,
     minimumMatches: LOBBY_LEADERBOARD_MIN_MATCHES,
   };

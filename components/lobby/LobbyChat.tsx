@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { formatLobbyMoment } from "@/components/lobby/utils";
 import {
   type CSSProperties,
@@ -22,6 +23,7 @@ import type { AiVisibilityOption } from "@/lib/aiConciergeConfig";
 import AutoGrowTextarea from "@/components/ui/AutoGrowTextarea";
 import { LOBBY_MESSAGE_MAX_CHARS } from "@/lib/lobby";
 import { LOBBY_MESSAGE_REACTIONS } from "@/lib/lobbyReactionConfig";
+import { avatarUrlForUser } from "@/lib/avatarAssets";
 
 type LobbyChatProps = {
   style?: CSSProperties;
@@ -57,6 +59,7 @@ type LobbyChatProps = {
   onEditMessage: (messageId: number, body: string) => void;
   onDeleteMessage: (messageId: number) => void;
   onLogin: () => void;
+  surface?: "standard" | "extreme";
 };
 
 export function LobbyChat(props: LobbyChatProps) {
@@ -92,13 +95,31 @@ export function LobbyChat(props: LobbyChatProps) {
     onEditMessage,
     onDeleteMessage,
     onLogin,
+    surface = "standard",
   } = props;
 
   const tone = getLobbyPresentationTone(themeKey, viewMode);
+  const isExtreme = surface === "extreme";
+
+  const viewerName =
+    playerName || displayName(currentUserInGameName, currentUserSteamPersonaName) || "You";
+
+  const typingLabel =
+    chatPending
+      ? aiEnabled && (aiScribeEnabled || aiGrimerEnabled)
+        ? `${aiScribeEnabled ? "The AI Scribe" : "Grimer"} is typing...`
+        : "The lobby is typing..."
+      : messageBody.trim().length > 0
+        ? `${viewerName} is typing...`
+        : null;
 
   return (
     <div
-      className={`flex min-h-[32rem] min-w-0 max-h-[min(88dvh,48rem)] flex-col rounded-[1.75rem] border p-4 sm:min-h-[35rem] sm:max-h-[52rem] sm:p-5 lg:min-h-[34rem] lg:max-h-none lg:p-6 ${tone.panelShell}`}
+      className={`flex h-[min(76dvh,46rem)] min-h-[28rem] w-full min-w-0 max-w-full flex-col overflow-hidden rounded-[1.75rem] border p-4 sm:h-[min(78dvh,48rem)] sm:min-h-[30rem] sm:p-5 lg:h-[min(78dvh,50rem)] lg:min-h-[32rem] lg:p-6 ${
+        isExtreme
+          ? "border-amber-200/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.045),rgba(255,255,255,0.018))] shadow-[0_26px_88px_rgba(0,0,0,0.28)]"
+          : tone.panelShell
+      }`}
       style={style}
     >
       <div className="flex items-center justify-between gap-4">
@@ -114,11 +135,11 @@ export function LobbyChat(props: LobbyChatProps) {
         </div>
       </div>
 
-      <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
+      <div className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden">
         <div
-          className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border p-3 sm:p-4 ${tone.insetPanel}`}
+          className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border p-3 sm:p-4 ${tone.insetPanel}`}
         >
-          <div ref={chatScrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-12 pr-1">
+          <div ref={chatScrollRef} className="min-h-0 min-w-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto pb-12 pr-1">
             {chatItems.length === 0 ? (
               <div className={`rounded-xl border px-4 py-5 text-sm text-slate-300 ${tone.subduedCard}`}>
                 No messages yet. The first tournament chatter starts here.
@@ -145,6 +166,13 @@ export function LobbyChat(props: LobbyChatProps) {
               )
             )}
           </div>
+
+          {typingLabel ? (
+            <div className="mt-2 flex items-center gap-2 px-1 text-xs text-slate-400">
+              <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-300/80" />
+              <span>{typingLabel}</span>
+            </div>
+          ) : null}
         </div>
 
         {chatNotice && !chatError ? (
@@ -241,14 +269,34 @@ export function LobbyChat(props: LobbyChatProps) {
                   />
                 </div>
 
-                <button
-                  type="button"
-                  onClick={onSendMessage}
-                  disabled={chatPending || messageBody.trim().length === 0}
-                  className={`min-h-[3.25rem] shrink-0 rounded-full px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-[6.25rem] ${tone.primaryButton}`}
-                >
-                  {chatPending ? "Sending..." : "Send"}
-                </button>
+                  <button
+                    type="button"
+                    onClick={onSendMessage}
+                    disabled={chatPending || messageBody.trim().length === 0}
+                    className={`flex min-h-[3.25rem] w-[3.25rem] shrink-0 items-center justify-center rounded-full text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${tone.primaryButton}`}
+                    aria-label={chatPending ? "Sending message" : "Send message"}
+                    title={chatPending ? "Sending..." : "Send"}
+                  >
+                    {chatPending ? (
+                      <span className="h-4 w-4 animate-pulse rounded-full bg-current/70" />
+                    ) : (
+                      <svg viewBox="0 0 20 20" className="h-4.5 w-4.5" fill="none" aria-hidden="true">
+                        <path
+                          d="M3.25 10.35 16.5 3.75l-4.1 12.5-2.45-5.05-5.25-1.15Z"
+                          stroke="currentColor"
+                          strokeWidth="1.55"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="m9.95 11.2 2.8-2.95"
+                          stroke="currentColor"
+                          strokeWidth="1.55"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    )}
+                  </button>
               </div>
 
               <div className="flex justify-end text-[11px] uppercase tracking-[0.18em] text-slate-600">
@@ -338,6 +386,8 @@ function LobbyMessageCard({
     currentUserIsAdmin || (currentUserUid !== null && item.message.user.uid === currentUserUid);
   const aiLabel =
     displayName(item.message.user.inGameName, item.message.user.steamPersonaName) || "The AI Scribe";
+  const authorName = displayName(item.message.user.inGameName, item.message.user.steamPersonaName) || aiLabel;
+  const avatarSrc = avatarUrlForUser(item.message.user.uid, authorName);
 
   useEffect(() => {
     if (!pickerPinnedOpen || typeof document === "undefined") {
@@ -456,7 +506,7 @@ function LobbyMessageCard({
   return (
     <div
       ref={cardRef}
-      className={`group relative overflow-visible rounded-xl border px-4 py-4 ${tone.subduedCard}`}
+      className={`group relative overflow-hidden rounded-xl border px-4 py-4 ${tone.subduedCard}`}
       onClick={handleCardTap}
       onPointerDown={(event) => beginLongPress(event.pointerType)}
       onPointerUp={clearHoldTimer}
@@ -466,8 +516,20 @@ function LobbyMessageCard({
       onMouseLeave={handleDesktopHoverEnd}
     >
       <div className="flex items-center justify-between gap-3">
-        <div className="font-medium text-white">
-          {displayName(item.message.user.inGameName, item.message.user.steamPersonaName)}
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full border border-amber-200/14 bg-black/28">
+            <Image
+              src={avatarSrc}
+              alt=""
+              fill
+              unoptimized
+              sizes="40px"
+              className="object-cover object-top"
+            />
+          </span>
+          <div className="min-w-0 truncate font-medium text-white">
+            {authorName}
+          </div>
         </div>
 
         <div className="text-xs text-slate-400">
@@ -493,7 +555,7 @@ function LobbyMessageCard({
 
       <p className="mt-3 text-sm leading-6 text-slate-200">{item.message.body}</p>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <div className="mt-4 flex min-w-0 max-w-full flex-wrap items-center gap-2 overflow-x-hidden">
         {item.message.reactions.map((reaction) => {
           const tooltip =
             isAuthenticated && (reaction.users.length > 0 || reaction.anonymousCount > 0)
@@ -508,7 +570,7 @@ function LobbyMessageCard({
               title={tooltip}
               aria-pressed={reaction.viewerReacted}
               disabled={reactingMessageId === item.message.id}
-              className={`inline-flex min-w-[3rem] items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition ${
+              className={`inline-flex min-h-10 min-w-[3.55rem] items-center justify-center gap-1.5 rounded-full border px-4 py-2 text-[13px] font-medium transition ${
                 reaction.viewerReacted
                   ? "border-amber-300/20 bg-amber-400/12 text-amber-100"
                   : "border-white/10 bg-[#0c1524] text-slate-300 hover:border-white/18 hover:text-white"
@@ -525,66 +587,65 @@ function LobbyMessageCard({
           onClick={handleReactionHandleClick}
           aria-label={pickerVisible ? "Hide reactions" : "Show reactions"}
           aria-expanded={pickerVisible}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-[#0c1524] text-sm text-slate-300 transition hover:border-white/18 hover:text-white"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-[#0c1524] text-base text-slate-300 transition hover:border-white/18 hover:text-white"
         >
           +
         </button>
       </div>
 
-      <div
-        className={`absolute left-4 top-full z-30 mt-2 transition-all duration-150 ${
-          pickerVisible
-            ? "pointer-events-auto translate-y-0 opacity-100"
-            : "pointer-events-none translate-y-1 opacity-0"
-        }`}
-        onMouseEnter={handleDesktopHoverStart}
-        onMouseLeave={handleDesktopHoverEnd}
-      >
-        <div className="inline-flex max-w-[calc(100vw-6rem)] flex-wrap items-center gap-2 rounded-full border border-white/10 bg-[#091321] px-2.5 py-2 shadow-[0_18px_40px_rgba(2,6,23,0.4)]">
-          {LOBBY_MESSAGE_REACTIONS.map((emoji) => {
-            const existing = item.message.reactions.find((reaction) => reaction.emoji === emoji);
-            const isActive = Boolean(existing?.viewerReacted);
-            return (
+        <div
+          className={`mt-3 max-w-full overflow-hidden transition-all duration-150 ${
+            pickerVisible ? "max-h-64 opacity-100" : "max-h-0 opacity-0"
+          }`}
+          onMouseEnter={handleDesktopHoverStart}
+          onMouseLeave={handleDesktopHoverEnd}
+        >
+          <div className="flex w-full min-w-0 max-w-full flex-wrap items-center gap-2 overflow-x-hidden rounded-2xl border border-white/10 bg-[#091321] p-2 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.025)]">
+            {LOBBY_MESSAGE_REACTIONS.map((emoji) => {
+              const existing = item.message.reactions.find((reaction) => reaction.emoji === emoji);
+              const isActive = Boolean(existing?.viewerReacted);
+
+              return (
+                <button
+                  key={`${item.message.id}-${emoji}`}
+                  type="button"
+                  onClick={(event) => handleReactionToggle(event, emoji)}
+                  aria-pressed={isActive}
+                  disabled={reactingMessageId === item.message.id}
+                  className={`flex h-11 min-w-11 items-center justify-center rounded-full border px-3.5 text-[17px] transition ${
+                    isActive
+                      ? "border-amber-300/30 bg-amber-400/16 text-amber-50 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.12)]"
+                      : "border-white/10 bg-white/[0.045] text-slate-200 hover:border-white/18 hover:bg-white/[0.1] hover:text-white"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  <span>{emoji}</span>
+                </button>
+              );
+            })}
+
+            {canManageMessage ? (
               <button
-                key={`${item.message.id}-${emoji}`}
                 type="button"
-                onClick={(event) => handleReactionToggle(event, emoji)}
-                aria-pressed={isActive}
-                disabled={reactingMessageId === item.message.id}
-                className={`flex h-9 min-w-9 items-center justify-center rounded-full border px-3 text-sm transition ${
-                  isActive
-                    ? "border-amber-300/30 bg-amber-400/16 text-amber-50 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.12)]"
-                    : "border-white/10 bg-white/[0.045] text-slate-200 hover:border-white/18 hover:bg-white/[0.1] hover:text-white"
-                } disabled:cursor-not-allowed disabled:opacity-60`}
+                onClick={handleEditClick}
+                disabled={moderatingMessageId === item.message.id}
+                className="inline-flex h-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.045] px-3 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/18 hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <span>{emoji}</span>
+                Edit
               </button>
-            );
-          })}
+            ) : null}
 
-          {canManageMessage ? (
-            <button
-              type="button"
-              onClick={handleEditClick}
-              disabled={moderatingMessageId === item.message.id}
-              className="inline-flex h-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.045] px-3 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/18 hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Edit
-            </button>
-          ) : null}
-
-          {canManageMessage ? (
-            <button
-              type="button"
-              onClick={handleDeleteClick}
-              disabled={moderatingMessageId === item.message.id}
-              className="inline-flex h-9 items-center justify-center rounded-full border border-rose-300/22 bg-rose-500/10 px-3 text-[11px] font-medium uppercase tracking-[0.16em] text-rose-50 transition hover:border-rose-200/30 hover:bg-rose-500/16 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Delete
-            </button>
-          ) : null}
+            {canManageMessage ? (
+              <button
+                type="button"
+                onClick={handleDeleteClick}
+                disabled={moderatingMessageId === item.message.id}
+                className="inline-flex h-10 items-center justify-center rounded-full border border-rose-300/22 bg-rose-500/10 px-3 text-[11px] font-medium uppercase tracking-[0.16em] text-rose-50 transition hover:border-rose-200/30 hover:bg-rose-500/16 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Delete
+              </button>
+            ) : null}
+          </div>
         </div>
-      </div>
     </div>
   );
 }

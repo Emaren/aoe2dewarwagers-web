@@ -6,9 +6,12 @@ import {
 } from "@/lib/betFounderBonuses";
 import { normalizePublicPlayerName } from "@/lib/publicPlayers";
 import { recordUserActivity } from "@/lib/userExperience";
+import { validateDistinctClaimPayoutTx } from "@/lib/woloClaimPayoutGuards";
 import {
+  executeFounderWoloPayout,
   executeWoloPayout,
   executeWoloSettlementRun,
+  getWoloPayoutExecutionBlocker,
   type SettlementRunResult,
 } from "@/lib/woloBetSettlement";
 
@@ -29,6 +32,8 @@ type RetryClaimSettlementOptions = {
   memoTag?: string;
 };
 
+const MAINNET_CLAIM_CUTOFF = new Date("2026-05-25T00:00:00.000Z");
+
 export type RetryClaimSettlementResult =
   | {
       outcome: "claimed";
@@ -40,7 +45,7 @@ export type RetryClaimSettlementResult =
   | {
       outcome: "skipped";
       claimId: number;
-      reason: "not_found" | "not_pending" | "unmatched_user" | "already_has_payout_tx";
+      reason: "not_found" | "not_pending" | "unmatched_user" | "already_has_payout_tx" | "pre_mainnet_legacy";
       detail?: string;
     }
   | {
@@ -233,6 +238,7 @@ export async function retryPendingClaimSettlement(
       sourceMarketId: true,
       sourceFounderBonusId: true,
       payoutTxHash: true,
+      createdAt: true,
     },
   });
 
@@ -246,6 +252,27 @@ export async function retryPendingClaimSettlement(
 
   if (claim.payoutTxHash?.trim()) {
     return { outcome: "skipped", claimId: claim.id, reason: "already_has_payout_tx" };
+  }
+
+  if (claim.createdAt < MAINNET_CLAIM_CUTOFF) {
+    const detail = "Legacy pre-mainnet claim row is not payable on WoloChain mainnet.";
+
+    await prisma.pendingWoloClaim.update({
+      where: { id: claim.id },
+      data: {
+        status: "rescinded",
+        errorState: "Closed 20260610: legacy pre-mainnet pending row; not payable on mainnet.",
+        payoutAttemptedAt: null,
+        rescindedAt: new Date(),
+      },
+    });
+
+    return {
+      outcome: "skipped",
+      claimId: claim.id,
+      reason: "pre_mainnet_legacy",
+      detail,
+    };
   }
 
   const founderResolution = claim.sourceFounderBonusId
@@ -301,7 +328,8 @@ export async function retryPendingClaimSettlement(
   const memoTag = options?.memoTag?.trim() || "admin_retry_settlement";
   const activityPath = options?.activityPath?.trim() || "/admin/user-list";
 
-  const useGroupedMarketSettlement = Boolean(market && isMarketSettlementClaim(claim));
+  const useFounderSettlement = Boolean(claim.sourceFounderBonusId);
+  const useGroupedMarketSettlement = Boolean(!useFounderSettlement && market && isMarketSettlementClaim(claim));
   let settlementRunId: string | null = null;
 
   try {
@@ -316,17 +344,36 @@ export async function retryPendingClaimSettlement(
           marketTitle: market.title,
           memoTag,
         })
-      : await executeWoloPayout({
+      : await (useFounderSettlement ? executeFounderWoloPayout : executeWoloPayout)({
           toAddress: matchedUser.walletAddress,
           amountWolo: claim.amountWolo,
           memo: `${market?.title || claim.displayPlayerName} · ${memoTag}`,
         });
 
     if (!payout?.txHash) {
-      throw new Error("WOLO payout execution returned no transaction hash.");
+      throw new Error(
+        getWoloPayoutExecutionBlocker() ||
+          "WOLO payout execution returned no transaction hash."
+      );
     }
 
     settlementRunId = "settlementRunId" in payout ? payout.settlementRunId : null;
+
+    const payoutGuard = await validateDistinctClaimPayoutTx(prisma, {
+      key: `claim-${claim.id}`,
+      claimId: claim.id,
+      txHash: payout.txHash,
+      toAddress: matchedUser.walletAddress,
+      amountWolo: claim.amountWolo,
+    });
+
+    if (!payoutGuard.ok) {
+      throw new Error(
+        payoutGuard.detail ||
+          payoutGuard.failureCode ||
+          "WOLO payout tx failed distinct MsgSend validation."
+      );
+    }
 
     await prisma.pendingWoloClaim.update({
       where: { id: claim.id },
@@ -335,7 +382,7 @@ export async function retryPendingClaimSettlement(
         claimedByUserId: matchedUser.id,
         claimedAt: attemptAt,
         payoutTxHash: payout.txHash,
-        payoutProofUrl: payout.proofUrl ?? null,
+        payoutProofUrl: payoutGuard.proofUrl ?? payout.proofUrl ?? null,
         errorState: null,
         payoutAttemptedAt: attemptAt,
         note: compactSettlementNote(
@@ -370,7 +417,7 @@ export async function retryPendingClaimSettlement(
           },
           data: {
             payoutTxHash: payout.txHash,
-            payoutProofUrl: payout.proofUrl ?? null,
+            payoutProofUrl: payoutGuard.proofUrl ?? payout.proofUrl ?? null,
           },
         });
       }

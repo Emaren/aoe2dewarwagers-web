@@ -74,6 +74,7 @@ function mergeUsersWithLiveData(users: AdminUserRow[], liveRows: AdminUsersLiveP
       adminLastInboxReadAt: live.adminLastInboxReadAt,
       recentActionsTotalCount: live.recentActionsTotalCount,
       lastActivityAt: live.lastActivityAt,
+      journeySummary: live.journeySummary,
       pendingBadgeCount: live.pendingBadgeCount,
       pendingGiftCount: live.pendingGiftCount,
       pendingWoloClaimCount: live.pendingWoloClaimCount,
@@ -176,6 +177,7 @@ export function useAdminCommandTowerData(): CommandTowerState {
           ...current,
           marketRail: payload.marketRail,
           settlementRail: payload.settlementRail,
+          walletFriction: payload.walletFriction,
           watcherDownloads: payload.watcherDownloads,
         };
       });

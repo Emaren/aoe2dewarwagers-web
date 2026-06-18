@@ -26,6 +26,10 @@ model User {
   steamId            String?   @unique(map: "uq_users_steam_id") @map("steam_id") @db.VarChar(32)
   steamPersonaName   String?   @map("steam_persona_name") @db.VarChar(255)
   twitchStreamUrl    String?   @map("twitch_stream_url") @db.VarChar(500)
+  representedCountry String?   @map("represented_country") @db.VarChar(40)
+  representedCountryUpdatedAt DateTime? @map("represented_country_updated_at") @db.Timestamp(6)
+  genderDivision     String    @default("Man") @map("gender_division") @db.VarChar(16)
+  genderDivisionUpdatedAt DateTime? @map("gender_division_updated_at") @db.Timestamp(6)
   verificationLevel  Int       @default(0) @map("verification_level")
   verificationMethod String    @default("none") @map("verification_method") @db.VarChar(32)
   verifiedAt         DateTime? @map("verified_at") @db.Timestamp(6)
@@ -51,6 +55,7 @@ model User {
   activityEvents                 UserActivityEvent[]
   watcherDownloadEvents          WatcherDownloadEvent[]
   watcherClientEvents            WatcherClientEvent[]
+  gameWatchStreams               GameWatchStream[]               @relation("GameWatchStreamOwner")
   betWagers                      BetWager[]
   betStakeIntents                BetStakeIntent[]
   betMarketWallets               BetMarketWallet[]
@@ -391,6 +396,20 @@ model ChatMessageGuestReaction {
   @@map("chat_message_guest_reactions")
 }
 
+model LiveTickerMessage {
+  id        Int       @id @default(autoincrement())
+  text      String    @db.VarChar(180)
+  enabled   Boolean   @default(true)
+  priority  Int       @default(0)
+  expiresAt DateTime? @map("expires_at") @db.Timestamp(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@index([enabled, priority, expiresAt], map: "ix_live_ticker_messages_enabled_priority")
+  @@index([expiresAt], map: "ix_live_ticker_messages_expires_at")
+  @@map("live_ticker_messages")
+}
+
 model DirectConversation {
   id        Int      @id @default(autoincrement())
   pairKey   String   @unique(map: "uq_direct_conversations_pair_key") @map("pair_key") @db.VarChar(64)
@@ -576,6 +595,27 @@ model UserAppearancePreference {
   tileViewPreferences Json?   @map("tile_view_preferences")
 
   @@map("user_appearance_preferences")
+}
+
+model ManagedMediaAsset {
+  id            Int      @id @default(autoincrement())
+  key           String   @unique @db.VarChar(160)
+  kind          String   @db.VarChar(32)
+  target        String?  @db.VarChar(160)
+  label         String   @db.VarChar(160)
+  url           String   @db.VarChar(500)
+  alt           String?  @db.VarChar(180)
+  mimeType      String?  @map("mime_type") @db.VarChar(100)
+  originalName  String?  @map("original_name") @db.VarChar(255)
+  sizeBytes     Int      @default(0) @map("size_bytes")
+  active        Boolean  @default(true)
+  uploadedByUid String?  @map("uploaded_by_uid") @db.VarChar(100)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@index([kind, target, active], map: "ix_managed_media_assets_kind_target_active")
+  @@index([createdAt], map: "ix_managed_media_assets_created_at")
+  @@map("managed_media_assets")
 }
 
 model UserActivityEvent {
@@ -829,9 +869,11 @@ model StakingPosition {
   currentStakedWolo   Int      @default(0) @map("current_staked_wolo")
   accumulatedWeight   BigInt   @default(0) @map("accumulated_weight")
   lastWeightUpdateAt  DateTime @default(now()) @map("last_weight_update_at") @db.Timestamp(6)
-  pendingRewardsWolo  Int      @default(0) @map("pending_rewards_wolo")
-  lifetimeRewardsWolo Int      @default(0) @map("lifetime_rewards_wolo")
-  claimedRewardsWolo  Int      @default(0) @map("claimed_rewards_wolo")
+  pendingRewardsWolo    Int      @default(0) @map("pending_rewards_wolo")
+  lifetimeRewardsWolo   Int      @default(0) @map("lifetime_rewards_wolo")
+  claimedRewardsWolo    Int      @default(0) @map("claimed_rewards_wolo")
+  autoCompoundRewards   Boolean  @default(true) @map("auto_compound_rewards")
+  compoundedRewardsWolo Int      @default(0) @map("compounded_rewards_wolo")
   status              String   @default("active") @db.VarChar(24)
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
@@ -869,6 +911,34 @@ model StakingEvent {
   @@index([status, createdAt], map: "ix_staking_events_status_created")
   @@index([txHash], map: "ix_staking_events_tx_hash")
   @@map("staking_events")
+}
+
+model WoloIndexedTransfer {
+  id                Int      @id @default(autoincrement())
+  chainId           String   @map("chain_id") @db.VarChar(32)
+  txHash            String   @map("tx_hash") @db.VarChar(128)
+  transferIndex     Int      @default(0) @map("transfer_index")
+  height            BigInt
+  timestamp         DateTime @db.Timestamp(6)
+  senderAddress     String   @map("sender_address") @db.VarChar(100)
+  recipientAddress  String   @map("recipient_address") @db.VarChar(100)
+  amountUwolo       BigInt   @map("amount_uwolo")
+  amountWoloDisplay Decimal  @map("amount_wolo_display") @db.Decimal(20, 6)
+  denom             String   @db.VarChar(32)
+  memo              String?
+  rawType           String?  @map("raw_type") @db.VarChar(100)
+  eventType         String?  @map("event_type") @db.VarChar(80)
+  source            String   @default("wolo-mainnet-bank-send") @db.VarChar(80)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@unique([txHash, transferIndex], map: "uq_wolo_indexed_transfers_tx_hash_transfer_index")
+  @@index([chainId, height], map: "ix_wolo_indexed_transfers_chain_height")
+  @@index([txHash], map: "ix_wolo_indexed_transfers_tx_hash")
+  @@index([senderAddress], map: "ix_wolo_indexed_transfers_sender")
+  @@index([recipientAddress], map: "ix_wolo_indexed_transfers_recipient")
+  @@index([timestamp], map: "ix_wolo_indexed_transfers_timestamp")
+  @@map("wolo_indexed_transfers")
 }
 
 model StakingRewardDistribution {
@@ -944,21 +1014,36 @@ model StakingDailyStat {
 }
 
 model GameWatchStream {
-  id          Int      @id @default(autoincrement())
-  sessionKey  String   @map("session_key") @db.VarChar(255)
-  provider    String   @db.VarChar(24)
-  role        String   @db.VarChar(24)
-  label       String   @db.VarChar(80)
-  url         String   @db.VarChar(500)
-  embedId     String?  @map("embed_id") @db.VarChar(255)
-  playerLabel String?  @map("player_label") @db.VarChar(80)
-  isPrimary   Boolean  @default(false) @map("is_primary")
-  status      String   @default("live") @db.VarChar(24)
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+  id              Int       @id @default(autoincrement())
+  sessionKey      String    @map("session_key") @db.VarChar(255)
+  userId          Int?      @map("user_id")
+  provider        String    @db.VarChar(24)
+  sourceType      String    @default("external") @map("source_type") @db.VarChar(32)
+  role            String    @db.VarChar(24)
+  label           String    @db.VarChar(80)
+  title           String?   @db.VarChar(140)
+  url             String    @db.VarChar(500)
+  playbackUrl     String?   @map("playback_url") @db.VarChar(500)
+  embedId         String?   @map("embed_id") @db.VarChar(255)
+  playerLabel     String?   @map("player_label") @db.VarChar(80)
+  thumbnailUrl    String?   @map("thumbnail_url") @db.Text
+  mediaMimeType   String?   @map("media_mime_type") @db.VarChar(120)
+  isPrimary       Boolean   @default(false) @map("is_primary")
+  status          String    @default("live") @db.VarChar(24)
+  chunkCount      Int       @default(0) @map("chunk_count")
+  latestChunkSeq  Int       @default(-1) @map("latest_chunk_seq")
+  lastHeartbeatAt DateTime? @map("last_heartbeat_at") @db.Timestamp(6)
+  startedAt       DateTime? @map("started_at") @db.Timestamp(6)
+  endedAt         DateTime? @map("ended_at") @db.Timestamp(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  user User? @relation("GameWatchStreamOwner", fields: [userId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   @@index([sessionKey, isPrimary], map: "ix_game_watch_streams_session_primary")
   @@index([sessionKey, status], map: "ix_game_watch_streams_session_status")
+  @@index([userId, status], map: "ix_game_watch_streams_user_status")
+  @@index([sourceType, status], map: "ix_game_watch_streams_source_status")
   @@index([provider], map: "ix_game_watch_streams_provider")
   @@map("game_watch_streams")
 }

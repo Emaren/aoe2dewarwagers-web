@@ -16,22 +16,34 @@ import {
 import { settleFounderBonuses } from "@/lib/betFounderBonuses";
 import {
   executeWoloSettlementRun,
+  getWoloPayoutExecutionBlocker,
   getWoloSettlementSurfaceStatus,
   hasWoloPayoutExecutionConfigured,
   type SettlementRunResult,
   validateWoloSettlementRun,
 } from "@/lib/woloBetSettlement";
+import {
+  validateDistinctClaimPayoutTxBatch,
+  type ClaimPayoutGuardResult,
+} from "@/lib/woloClaimPayoutGuards";
 import { recordUserActivity } from "@/lib/userExperience";
 import {
   WOLO_BET_TEST_MODE,
   buildWoloRestTxLookupUrl,
+  getWoloMainnetDisplayStartAt,
   getWoloBetEscrowRuntime,
+  isMainnetVisibleBetWager,
+  isWoloMainnet,
 } from "@/lib/woloChain";
 import {
   BET_STAKE_INTENT_RECOVERABLE_STATUSES,
   isBetStakeIntentCountableStatus,
   loadViewerBetStakeIntents,
 } from "@/lib/betStakeIntents";
+import {
+  BETTING_FEE_RATE_BPS,
+  BPS_DENOMINATOR,
+} from "@/lib/bettingFees";
 import {
   normalizeWatchStreamInput,
   toWatchStreamPayload,
@@ -634,6 +646,46 @@ function buildSessionMarketTitle(session: LiveGameSession) {
 
 function normalizeSettledMatchKey(title: string, mapName: string | null | undefined) {
   return `${normalizeName(title).toLowerCase()}::${normalizeName(mapName).toLowerCase()}`;
+}
+
+function readMarketMapLabel(eventLabel: string) {
+  return eventLabel.includes("•")
+    ? eventLabel.split("•").slice(1).join("•").trim() || eventLabel
+    : eventLabel;
+}
+
+function marketSideKey(value: string | null | undefined) {
+  return normalizeName(value).toLowerCase();
+}
+
+function resolveMarketSideTransfer(
+  source: {
+    leftLabel: string;
+    rightLabel: string;
+  },
+  target: {
+    leftLabel: string;
+    rightLabel: string;
+  }
+) {
+  const sourceLeft = marketSideKey(source.leftLabel);
+  const sourceRight = marketSideKey(source.rightLabel);
+  const targetLeft = marketSideKey(target.leftLabel);
+  const targetRight = marketSideKey(target.rightLabel);
+
+  if (!sourceLeft || !sourceRight || !targetLeft || !targetRight) {
+    return null;
+  }
+
+  if (sourceLeft === targetLeft && sourceRight === targetRight) {
+    return { left: "left", right: "right" } as const;
+  }
+
+  if (sourceLeft === targetRight && sourceRight === targetLeft) {
+    return { left: "right", right: "left" } as const;
+  }
+
+  return null;
 }
 
 function splitSideNames(label: string) {
@@ -1265,15 +1317,36 @@ function isCountableOnchainWagerStakeIntent(
 function isCountableBetWager(
   wager: {
     executionMode: string;
+    stakeTxHash?: string | null;
+    createdAt?: Date | string | null;
+    stakeLockedAt?: Date | string | null;
     stakeIntent?: { status: string | null } | null;
   }
 ) {
+  if (!isMainnetVisibleBetWager(wager)) {
+    return false;
+  }
+
   return (
     wager.executionMode !== "onchain_escrow" || isCountableOnchainWagerStakeIntent(wager.stakeIntent)
   );
 }
 
 function buildCountableActiveWagerWhere() {
+  if (isWoloMainnet()) {
+    return {
+      status: "active",
+      executionMode: "onchain_escrow",
+      stakeTxHash: { not: null },
+      stakeLockedAt: { gte: getWoloMainnetDisplayStartAt() },
+      stakeIntent: {
+        is: {
+          status: "recorded",
+        },
+      },
+    };
+  }
+
   return {
     status: "active",
     OR: [
@@ -1290,6 +1363,66 @@ function buildCountableActiveWagerWhere() {
       },
     ],
   };
+}
+
+function allocateBettingFeeByWagerId(
+  wagers: Array<{ id: number; amountWolo: number }>,
+  totalFeeWolo: number
+) {
+  const feeByWagerId = new Map<number, number>();
+  const totalWinningStake = wagers.reduce((sum, wager) => sum + wager.amountWolo, 0);
+
+  if (totalFeeWolo <= 0 || totalWinningStake <= 0) {
+    return feeByWagerId;
+  }
+
+  const allocations = wagers.map((wager) => {
+    const exact = (totalFeeWolo * wager.amountWolo) / totalWinningStake;
+    const base = Math.floor(exact);
+    return {
+      id: wager.id,
+      amountWolo: wager.amountWolo,
+      feeWolo: base,
+      remainder: exact - base,
+    };
+  });
+
+  let assigned = allocations.reduce((sum, allocation) => sum + allocation.feeWolo, 0);
+  let remaining = Math.max(0, totalFeeWolo - assigned);
+
+  allocations
+    .sort((left, right) => {
+      if (right.remainder !== left.remainder) return right.remainder - left.remainder;
+      if (right.amountWolo !== left.amountWolo) return right.amountWolo - left.amountWolo;
+      return left.id - right.id;
+    })
+    .forEach((allocation) => {
+      if (remaining <= 0) return;
+      allocation.feeWolo += 1;
+      remaining -= 1;
+    });
+
+  assigned = allocations.reduce((sum, allocation) => sum + allocation.feeWolo, 0);
+  if (assigned > totalFeeWolo) {
+    let overage = assigned - totalFeeWolo;
+    [...allocations]
+      .sort((left, right) => {
+        if (left.remainder !== right.remainder) return left.remainder - right.remainder;
+        if (left.amountWolo !== right.amountWolo) return left.amountWolo - right.amountWolo;
+        return right.id - left.id;
+      })
+      .forEach((allocation) => {
+        if (overage <= 0 || allocation.feeWolo <= 0) return;
+        allocation.feeWolo -= 1;
+        overage -= 1;
+      });
+  }
+
+  for (const allocation of allocations) {
+    feeByWagerId.set(allocation.id, allocation.feeWolo);
+  }
+
+  return feeByWagerId;
 }
 
 function combineSettlementDetail(
@@ -1313,6 +1446,18 @@ function combineSettlementDetail(
   }
 
   return clampNullableDbText(combined, 255);
+}
+
+function guardFailureDetail(result: ClaimPayoutGuardResult | null | undefined) {
+  if (!result || result.ok) return null;
+  return result.detail || result.failureCode || "WOLO payout tx failed distinct-send validation.";
+}
+
+function summarizeSettlementConfigBlocker() {
+  return (
+    getWoloPayoutExecutionBlocker() ||
+    "Claim rail pending manual or unmatched payouts; no auto payout signer matched these claims."
+  );
 }
 
 async function settleResolvedMarketWagers(prisma: PrismaClient) {
@@ -1389,6 +1534,15 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
             .filter((wager) => wager.side === "left")
             .reduce((sum, wager) => sum + wager.amountWolo, 0)
         : 0;
+    const settledUserPool = market.wagers.reduce((sum, wager) => sum + wager.amountWolo, 0);
+    const bettingFeePoolWolo =
+      winningSide && settledUserPool > 0
+        ? Math.round((settledUserPool * BETTING_FEE_RATE_BPS) / BPS_DENOMINATOR)
+        : 0;
+    const feeByWinningWagerId = allocateBettingFeeByWagerId(
+      winningSide ? market.wagers.filter((wager) => wager.side === winningSide) : [],
+      bettingFeePoolWolo
+    );
 
     const claimPlans = new Map<string, MarketSettlementClaimPlan>();
 
@@ -1396,6 +1550,7 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
       for (const wager of market.wagers) {
         let nextStatus: "won" | "lost" | "void";
         let payoutWolo: number;
+        let bettingFeeWolo = 0;
 
         if (!winningSide) {
           nextStatus = "void";
@@ -1405,14 +1560,15 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
           payoutWolo = 0;
         } else {
           nextStatus = "won";
+          bettingFeeWolo = feeByWinningWagerId.get(wager.id) ?? 0;
           payoutWolo =
             winningUserPool > 0
               ? Math.max(
-                  wager.amountWolo,
+                  0,
                   Math.round(
                     wager.amountWolo +
                       losingSidePool * (wager.amountWolo / winningUserPool)
-                  )
+                  ) - bettingFeeWolo
                 )
               : wager.amountWolo;
         }
@@ -1445,6 +1601,8 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
             side: wager.side,
             amountWolo: wager.amountWolo,
             payoutWolo,
+            bettingFeeRateBps: BETTING_FEE_RATE_BPS,
+            bettingFeeWolo,
             settledAt: settledAt.toISOString(),
             outcome: nextStatus,
             winnerSide: winningSide,
@@ -1483,7 +1641,8 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
     if (winningSide) {
       const winningWagers = market.wagers.filter((wager) => wager.side === winningSide);
       const losingWagers = market.wagers.filter((wager) => wager.side !== winningSide);
-      const winnerBountyWolo = losingWagers.reduce((sum, wager) => sum + wager.amountWolo, 0);
+      const grossWinnerBountyWolo = losingWagers.reduce((sum, wager) => sum + wager.amountWolo, 0);
+      const winnerBountyWolo = Math.max(0, grossWinnerBountyWolo - bettingFeePoolWolo);
 
       if (winningWagers.length === 0 && winnerBountyWolo > 0) {
         const winnerName = getWinningPlayerName(market, winningSide);
@@ -1557,24 +1716,67 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
     const payoutByRequestId = new Map(
       (executionResult?.payouts || []).map((payout) => [payout.requestId, payout] as const)
     );
-    const settlementStatus = resolveMarketSettlementStatus(
-      executionResult,
-      validationResult,
-      claimPlanList.length
+
+    const payoutGuardByRequestId = new Map<string, ClaimPayoutGuardResult>();
+    const payoutGuardEntries = autoClaimPlans
+      .map((plan) => {
+        const payout = payoutByRequestId.get(plan.requestId);
+        if (!payout?.ok || !payout.txHash || !plan.walletAddress) return null;
+        return {
+          key: plan.requestId,
+          txHash: payout.txHash,
+          toAddress: plan.walletAddress,
+          amountWolo: plan.amountWolo,
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+    if (payoutGuardEntries.length > 0) {
+      const guardResults = await validateDistinctClaimPayoutTxBatch(prisma, payoutGuardEntries);
+      for (const [requestId, result] of guardResults.entries()) {
+        payoutGuardByRequestId.set(requestId, result);
+      }
+    }
+
+    const guardFailures = Array.from(payoutGuardByRequestId.values()).filter(
+      (result) => !result.ok
+    );
+    const settlementStatus =
+      guardFailures.length > 0
+        ? guardFailures.length >= payoutGuardByRequestId.size
+          ? "failed"
+          : "partial"
+        : resolveMarketSettlementStatus(
+            executionResult,
+            validationResult,
+            claimPlanList.length
+          );
+    const fallbackSettlementDetail =
+      claimPlanList.length > 0 && autoClaimPlans.length === 0
+        ? hasWoloPayoutExecutionConfigured()
+          ? "Claim rail pending manual or unmatched payouts."
+          : summarizeSettlementConfigBlocker()
+        : null;
+    const guardWarnings = guardFailures.map(
+      (result) =>
+        `Duplicate guard ${result.key}: ${result.detail || result.failureCode || "failed"}`
     );
     const settlementFailureCode = clampNullableDbText(
-      executionResult?.failureCode || validationResult?.failureCode || null,
+      guardFailures.length > 0
+        ? "DUPLICATE_TX_GUARD"
+        : executionResult?.failureCode || validationResult?.failureCode || null,
       80
     );
     const settlementDetail = combineSettlementDetail(
       executionResult?.detail ||
       validationResult?.detail ||
-      (claimPlanList.length > 0 && autoClaimPlans.length === 0
-        ? hasWoloPayoutExecutionConfigured()
-          ? "Claim rail pending manual or unmatched payouts."
-          : "Settlement execution is not configured in this environment."
-        : null),
-      [...(validationResult?.warnings || []), ...(executionResult?.warnings || [])]
+      guardFailureDetail(guardFailures[0]) ||
+      fallbackSettlementDetail,
+      [
+        ...(validationResult?.warnings || []),
+        ...(executionResult?.warnings || []),
+        ...guardWarnings,
+      ]
     );
 
     await prisma.$transaction(async (tx) => {
@@ -1592,9 +1794,11 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
 
       for (const plan of claimPlanList) {
         const payout = payoutByRequestId.get(plan.requestId);
-        const payoutSucceeded = Boolean(payout?.ok && payout.txHash);
+        const payoutGuard = payoutGuardByRequestId.get(plan.requestId) ?? null;
+        const payoutSucceeded = Boolean(payout?.ok && payout.txHash && payoutGuard?.ok);
         const awaitingWalletLink = !plan.walletAddress || !plan.claimedByUserId;
-        const payoutError = resolveSettlementPlanError(validationResult, payout);
+        const payoutError =
+          guardFailureDetail(payoutGuard) || resolveSettlementPlanError(validationResult, payout);
         const pendingError =
           !payoutSucceeded && awaitingWalletLink
             ? buildAwaitingWalletLinkClaimDetail(plan.displayPlayerName)
@@ -1624,7 +1828,7 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
             sourceMarketId: market.id,
             sourceGameStatsId: market.linkedGameStatsId ?? null,
             payoutTxHash: payout?.txHash ?? null,
-            payoutProofUrl: payout?.proofUrl ?? null,
+            payoutProofUrl: payoutGuard?.proofUrl ?? payout?.proofUrl ?? null,
             errorState: null,
             payoutAttemptedAt: settlementExecutedAt ?? settledAt,
             note: buildOnchainSettlementNote(
@@ -1643,7 +1847,7 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
               where: { id: { in: plan.wagerIds } },
               data: {
                 payoutTxHash: payout?.txHash ?? null,
-                payoutProofUrl: payout?.proofUrl ?? null,
+                payoutProofUrl: payoutGuard?.proofUrl ?? payout?.proofUrl ?? null,
               },
             });
           }
@@ -1658,7 +1862,7 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
             sourceMarketId: market.id,
             sourceGameStatsId: market.linkedGameStatsId ?? null,
             payoutTxHash: payout?.txHash ?? null,
-            payoutProofUrl: payout?.proofUrl ?? null,
+            payoutProofUrl: payoutGuard?.proofUrl ?? payout?.proofUrl ?? null,
             errorState: pendingError,
             payoutAttemptedAt: awaitingWalletLink ? null : settlementAttemptedAt,
             note: claimNote,
@@ -1679,7 +1883,7 @@ async function settleResolvedMarketWagers(prisma: PrismaClient) {
               claimReason: plan.claimReason,
               claimStatus: payoutSucceeded ? "claimed" : "pending",
               payoutTxHash: payout?.txHash ?? null,
-              payoutProofUrl: payout?.proofUrl ?? null,
+              payoutProofUrl: payoutGuard?.proofUrl ?? payout?.proofUrl ?? null,
               settlementRunId,
               settledAt: settledAt.toISOString(),
               errorState: payoutSucceeded ? null : pendingError,
@@ -1908,6 +2112,167 @@ async function reconcileDetachedWatcherMarkets(
   );
 }
 
+async function reconcileChallengeSessionShadowMarkets(
+  prisma: PrismaClient,
+  seeds: MarketSeed[]
+) {
+  const challengeSessionKeys = [
+    ...new Set(
+      seeds
+        .filter((seed) => seed.source === "challenge")
+        .map((seed) => normalizeName(seed.linkedSessionKey))
+        .filter(Boolean)
+    ),
+  ];
+
+  if (challengeSessionKeys.length === 0) {
+    return;
+  }
+
+  const markets = await prisma.betMarket.findMany({
+    where: {
+      linkedSessionKey: {
+        in: challengeSessionKeys,
+      },
+    },
+    select: {
+      id: true,
+      scheduledMatchId: true,
+      linkedSessionKey: true,
+      slug: true,
+      status: true,
+      leftLabel: true,
+      rightLabel: true,
+    },
+  });
+
+  const canonicalBySessionKey = new Map<string, (typeof markets)[number]>();
+  for (const market of markets) {
+    const sessionKey = normalizeName(market.linkedSessionKey);
+    if (!sessionKey || typeof market.scheduledMatchId !== "number") {
+      continue;
+    }
+
+    const existing = canonicalBySessionKey.get(sessionKey);
+    if (!existing || market.id < existing.id) {
+      canonicalBySessionKey.set(sessionKey, market);
+    }
+  }
+
+  const shadowMarkets = markets.filter((market) => {
+    const sessionKey = normalizeName(market.linkedSessionKey);
+    const canonical = sessionKey ? canonicalBySessionKey.get(sessionKey) : null;
+    return Boolean(
+      canonical &&
+        canonical.id !== market.id &&
+        market.scheduledMatchId === null &&
+        market.slug.startsWith(WATCHER_MARKET_SLUG_PREFIX) &&
+        OPEN_STATUSES.includes(market.status as BetStatus)
+    );
+  });
+
+  for (const shadow of shadowMarkets) {
+    const sessionKey = normalizeName(shadow.linkedSessionKey);
+    const canonical = sessionKey ? canonicalBySessionKey.get(sessionKey) : null;
+    if (!canonical) {
+      continue;
+    }
+
+    const sideTransfer = resolveMarketSideTransfer(shadow, canonical);
+    if (!sideTransfer) {
+      console.warn(
+        `Skipped watcher market #${shadow.id} merge into challenge market #${canonical.id}: side labels do not match.`
+      );
+      continue;
+    }
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        const [sourceWallets, targetWallets] = await Promise.all([
+          tx.betMarketWallet.findMany({
+            where: { marketId: shadow.id },
+            select: {
+              id: true,
+              walletAddress: true,
+              side: true,
+            },
+          }),
+          tx.betMarketWallet.findMany({
+            where: { marketId: canonical.id },
+            select: {
+              walletAddress: true,
+            },
+          }),
+        ]);
+        const targetWalletKeys = new Set(
+          targetWallets.map((wallet) => marketSideKey(wallet.walletAddress))
+        );
+
+        for (const wallet of sourceWallets) {
+          const walletKey = marketSideKey(wallet.walletAddress);
+          if (targetWalletKeys.has(walletKey)) {
+            await tx.betMarketWallet.delete({
+              where: { id: wallet.id },
+            });
+            continue;
+          }
+
+          await tx.betMarketWallet.update({
+            where: { id: wallet.id },
+            data: {
+              marketId: canonical.id,
+              side: wallet.side === "right" ? sideTransfer.right : sideTransfer.left,
+            },
+          });
+        }
+
+        await Promise.all([
+          tx.betWager.updateMany({
+            where: { marketId: shadow.id, side: "left" },
+            data: { marketId: canonical.id, side: sideTransfer.left },
+          }),
+          tx.betWager.updateMany({
+            where: { marketId: shadow.id, side: "right" },
+            data: { marketId: canonical.id, side: sideTransfer.right },
+          }),
+          tx.betStakeIntent.updateMany({
+            where: { marketId: shadow.id, side: "left" },
+            data: { marketId: canonical.id, side: sideTransfer.left },
+          }),
+          tx.betStakeIntent.updateMany({
+            where: { marketId: shadow.id, side: "right" },
+            data: { marketId: canonical.id, side: sideTransfer.right },
+          }),
+          tx.betMarketFounderBonus.updateMany({
+            where: { marketId: shadow.id },
+            data: { marketId: canonical.id },
+          }),
+          tx.pendingWoloClaim.updateMany({
+            where: { sourceMarketId: shadow.id },
+            data: { sourceMarketId: canonical.id },
+          }),
+        ]);
+
+        await tx.betMarket.update({
+          where: { id: shadow.id },
+          data: {
+            status: "settled",
+            featured: false,
+            closeAt: null,
+            settledAt: new Date(),
+            winnerSide: null,
+          },
+        });
+      });
+    } catch (error) {
+      console.warn(
+        `Failed to merge watcher market #${shadow.id} into challenge market #${canonical.id}:`,
+        error
+      );
+    }
+  }
+}
+
 export async function ensureBetMarkets(prisma: PrismaClient) {
   const { seeds, visibleSessionKeys } = await buildOpenMarketSeeds(prisma);
   const slugs = [...new Set(seeds.map((seed) => seed.slug))];
@@ -1933,6 +2298,7 @@ export async function ensureBetMarkets(prisma: PrismaClient) {
     })
   );
 
+  await reconcileChallengeSessionShadowMarkets(prisma, seeds);
   await reconcileDetachedWatcherMarkets(prisma, visibleSessionKeys);
 
   await prisma.betMarket.updateMany({
@@ -2028,7 +2394,10 @@ function buildMarketCard(
   const linkedSessionKey =
     market.linkedSessionKey?.trim() || market.scheduledMatch?.linkedSessionKey?.trim() || null;
   const founderBonuses = buildFounderChipSurface(market.founderBonuses);
-  const warTape = buildMarketWarTapeRows(market, claimsByMarketId.get(market.id) ?? []);
+  const warTape = buildMarketWarTapeRows(
+    { ...market, wagers: activeWagers },
+    claimsByMarketId.get(market.id) ?? []
+  );
 
   return {
     id: market.id,
@@ -2138,7 +2507,7 @@ async function loadOpenMarkets(prisma: PrismaClient) {
 }
 
 async function loadRecentSettledResults(prisma: PrismaClient): Promise<BetSettledResult[]> {
-  const [settledMarkets, sessionSnapshot] = await Promise.all([
+  const [settledMarketsRaw, sessionSnapshot] = await Promise.all([
     prisma.betMarket.findMany({
       where: {
         status: "settled",
@@ -2147,7 +2516,7 @@ async function loadRecentSettledResults(prisma: PrismaClient): Promise<BetSettle
         },
       },
       orderBy: [{ settledAt: "desc" }, { updatedAt: "desc" }, { id: "desc" }],
-      take: 4,
+      take: 40,
       include: {
         scheduledMatch: {
           select: {
@@ -2166,6 +2535,9 @@ async function loadRecentSettledResults(prisma: PrismaClient): Promise<BetSettle
             payoutWolo: true,
             status: true,
             executionMode: true,
+            stakeTxHash: true,
+            createdAt: true,
+            stakeLockedAt: true,
             stakeIntent: {
               select: {
                 status: true,
@@ -2177,6 +2549,42 @@ async function loadRecentSettledResults(prisma: PrismaClient): Promise<BetSettle
     }),
     loadLiveSessionSnapshot(prisma),
   ]);
+  const settledMarketBySurfaceKey = new Map<
+    string,
+    (typeof settledMarketsRaw)[number]
+  >();
+
+  for (const market of settledMarketsRaw) {
+    const linkedSessionKey =
+      normalizeName(market.linkedSessionKey) ||
+      normalizeName(market.scheduledMatch?.linkedSessionKey) ||
+      "";
+    const mapName = readMarketMapLabel(market.eventLabel);
+    const surfaceKey = linkedSessionKey
+      ? `session:${linkedSessionKey.toLowerCase()}`
+      : `match:${normalizeSettledMatchKey(market.title, mapName)}`;
+    const existing = settledMarketBySurfaceKey.get(surfaceKey);
+
+    if (!existing) {
+      settledMarketBySurfaceKey.set(surfaceKey, market);
+      continue;
+    }
+
+    const marketIsChallenge = typeof market.scheduledMatchId === "number";
+    const existingIsChallenge = typeof existing.scheduledMatchId === "number";
+    if (marketIsChallenge && !existingIsChallenge) {
+      settledMarketBySurfaceKey.set(surfaceKey, market);
+    }
+  }
+
+  const settledMarkets = [...settledMarketBySurfaceKey.values()]
+    .filter((market) => {
+      if (!isWoloMainnet()) return true;
+      return market.wagers.some(
+        (wager) => wager.status !== "void" && isCountableBetWager(wager)
+      );
+    })
+    .slice(0, 4);
 
   const sessionHrefByMatchKey = new Map(
     sessionSnapshot.recentlyCompletedSessions.map((session) => [
@@ -2205,9 +2613,7 @@ async function loadRecentSettledResults(prisma: PrismaClient): Promise<BetSettle
         settledPayoutTotal > 0
           ? settledPayoutTotal
           : totalPotWolo;
-      const mapName = market.eventLabel.includes("•")
-        ? market.eventLabel.split("•").slice(1).join("•").trim() || market.eventLabel
-        : market.eventLabel;
+      const mapName = readMarketMapLabel(market.eventLabel);
       const matchedSession = sessionHrefByMatchKey.get(
         normalizeSettledMatchKey(market.title, mapName)
       );
@@ -2244,6 +2650,10 @@ async function loadRecentSettledResults(prisma: PrismaClient): Promise<BetSettle
         })),
       } satisfies BetSettledResult;
     });
+  }
+
+  if (isWoloMainnet()) {
+    return [];
   }
 
   const rows = await prisma.gameStats.findMany({
@@ -2330,6 +2740,22 @@ function selectGodBroadcastFeed(streams: WatchStreamPayload[]) {
   );
 }
 
+const BROWSER_STREAM_STALE_MS = 45_000;
+
+function isVisibleBroadcastStream(stream: WatchStreamPayload) {
+  if (stream.sourceType !== "browser" && stream.provider !== "aoe2war") {
+    return stream.status !== "removed";
+  }
+
+  if (!["starting", "live"].includes(stream.status)) {
+    return false;
+  }
+
+  const lastSeen = stream.lastHeartbeatAt || stream.updatedAt;
+  const lastSeenMs = new Date(lastSeen).getTime();
+  return Number.isFinite(lastSeenMs) && Date.now() - lastSeenMs <= BROWSER_STREAM_STALE_MS;
+}
+
 function selectPlayerBroadcastFeed({
   streams,
   playerName,
@@ -2412,7 +2838,17 @@ function buildProfileBroadcastFeed({
     return {
       id: stableProfileStreamId([normalized.sessionKey, side, playerName, normalized.url]),
       ...normalized,
+      sourceType: "external",
+      title: `${playerName || (side === "left" ? "Player 1" : "Player 2")} POV`,
+      playbackUrl: null,
+      thumbnailUrl: null,
+      mediaMimeType: null,
       status: "profile",
+      chunkCount: 0,
+      latestChunkSeq: -1,
+      lastHeartbeatAt: null,
+      startedAt: null,
+      endedAt: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -2540,22 +2976,30 @@ async function loadWatchStreamsBySession(
     return new Map<string, WatchStreamPayload[]>();
   }
 
-  const rows = await prisma.gameWatchStream.findMany({
-    where: {
-      sessionKey: {
-        in: uniqueSessionKeys,
+  const rows = await prisma.gameWatchStream
+    .findMany({
+      where: {
+        sessionKey: {
+          in: uniqueSessionKeys,
+        },
+        status: {
+          not: "removed",
+        },
       },
-      status: {
-        not: "removed",
-      },
-    },
-    orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }, { id: "asc" }],
-  });
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }, { id: "asc" }],
+    })
+    .catch((error) => {
+      console.warn("Failed to load streams for bet broadcasts:", error);
+      return [];
+    });
 
   const streamsBySession = new Map<string, WatchStreamPayload[]>();
 
   for (const row of rows) {
     const stream = toWatchStreamPayload(row);
+    if (!isVisibleBroadcastStream(stream)) {
+      continue;
+    }
     const bucket = streamsBySession.get(stream.sessionKey) ?? [];
     bucket.push(stream);
     streamsBySession.set(stream.sessionKey, bucket);

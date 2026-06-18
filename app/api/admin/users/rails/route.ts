@@ -9,7 +9,14 @@ import {
 import { loadPendingWoloClaimsForAdmin } from "@/lib/pendingWoloClaims";
 import { loadWatcherDownloadAnalytics } from "@/lib/watcherDownloads";
 import { getWoloSettlementSurfaceStatus } from "@/lib/woloBetSettlement";
-import { buildWoloRestTxLookupUrl, getWoloBetEscrowRuntime } from "@/lib/woloChain";
+import {
+  buildWoloRestTxLookupUrl,
+  getWoloBetEscrowRuntime,
+  getWoloMainnetDisplayStartAt,
+  isMainnetVisibleBetWager,
+  isWoloMainnet,
+} from "@/lib/woloChain";
+import { loadBetWalletFrictionRail } from "@/lib/adminWalletFriction";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +49,30 @@ function resolveSettlementError(claim: {
   return claim.errorState?.trim() || extractAutoSettleError(claim.note);
 }
 
+function refineSettlementErrorForCurrentSurface(
+  value: string | null,
+  settlementSurface: Awaited<ReturnType<typeof getWoloSettlementSurfaceStatus>>
+) {
+  if (!value) return null;
+  const normalized = value.trim();
+  if (
+    /settlement execution is not configured|payout execution.*not configured|settlement service.*not configured/i.test(
+      normalized
+    ) &&
+    settlementSurface.settlementHealthOk &&
+    settlementSurface.settlementHealthChainId === "wolo-1"
+  ) {
+    return "Current wolo-1 settlement health is ok; this row needs retry/review rather than service configuration.";
+  }
+  if (/auth/i.test(normalized) && settlementSurface.groupedRunCapability === "auth_failed") {
+    return "WoloChain grouped settlement auth rejected the configured bearer token.";
+  }
+  if (/auth/i.test(normalized) && settlementSurface.groupedRunCapability === "auth_required") {
+    return "WoloChain grouped settlement auth is required, but the app has no settlement auth token configured.";
+  }
+  return normalized;
+}
+
 function deriveSettlementMode(
   status: "pending" | "claimed" | "rescinded",
   payoutTxHash: string | null
@@ -58,6 +89,12 @@ function isAwaitingVerifiedWalletLinkDetail(value: string | null | undefined) {
   );
 }
 
+function isSettlementUnavailableDetail(value: string | null | undefined) {
+  return /settlement.*not configured|settlement_health|payout_fee_headroom_too_low|escrow_balance_too_low|payout execution.*not configured|service.*unconfigured|signer.*missing|signers unavailable|127\.0\.0\.1:8092|127\.0\.0\.1:8091|wolo-testnet/i.test(
+    value || ""
+  );
+}
+
 function projectReturnWolo(stakeWolo: number, selectedPoolWolo: number, oppositePoolWolo: number) {
   if (stakeWolo <= 0) return 0;
   const nextSelectedPool = selectedPoolWolo + stakeWolo;
@@ -70,12 +107,23 @@ function projectReturnWolo(stakeWolo: number, selectedPoolWolo: number, opposite
 
 function isCountableWagerRow(wager: {
   executionMode: string;
+  stakeTxHash?: string | null;
+  stakeLockedAt?: Date | string | null;
+  createdAt?: Date | string | null;
   stakeIntent?: { status: string | null } | null;
 }) {
+  if (!isMainnetVisibleBetWager(wager)) {
+    return false;
+  }
+
   return (
     wager.executionMode !== "onchain_escrow" ||
     isBetStakeIntentCountableStatus(wager.stakeIntent?.status)
   );
+}
+
+function isVisibleMainnetClaim(claim: { createdAt: Date }) {
+  return !isWoloMainnet() || claim.createdAt.getTime() >= getWoloMainnetDisplayStartAt().getTime();
 }
 
 function resolveExecutionMode(
@@ -146,7 +194,7 @@ export async function GET(request: NextRequest) {
     ] as const;
 
     const escrowRuntime = getWoloBetEscrowRuntime();
-    const [allClaims, marketRows, settlementSurface, watcherDownloads] = await Promise.all([
+    const [allClaims, marketRows, settlementSurface, watcherDownloads, walletFriction] = await Promise.all([
       loadPendingWoloClaimsForAdmin(prisma, { take: 500 }),
       prisma.betMarket.findMany({
         where: {
@@ -198,6 +246,7 @@ export async function GET(request: NextRequest) {
               stakeLockedAt: true,
               payoutTxHash: true,
               payoutProofUrl: true,
+              createdAt: true,
               updatedAt: true,
               stakeIntent: {
                 select: {
@@ -244,11 +293,14 @@ export async function GET(request: NextRequest) {
       }),
       getWoloSettlementSurfaceStatus(),
       loadWatcherDownloadAnalytics(prisma),
+      loadBetWalletFrictionRail(prisma),
     ]);
+
+    const visibleClaims = allClaims.filter(isVisibleMainnetClaim);
 
     const settlementMarketIds = Array.from(
       new Set(
-        allClaims
+        visibleClaims
           .map((claim) => claim.sourceMarketId)
           .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
       )
@@ -272,7 +324,7 @@ export async function GET(request: NextRequest) {
       settlementMarkets.map((market) => [market.id, market] as const)
     );
 
-    const settlementRows: AdminUsersRailsPayload["settlementRail"]["rows"] = allClaims
+    const settlementRows: AdminUsersRailsPayload["settlementRail"]["rows"] = visibleClaims
       .slice(0, 60)
       .map((claim) => {
       const market =
@@ -287,7 +339,10 @@ export async function GET(request: NextRequest) {
             : null;
 
       const payoutTxHash = resolveSettlementTxHash(claim);
-      const errorState = resolveSettlementError(claim);
+      const errorState = refineSettlementErrorForCurrentSurface(
+        resolveSettlementError(claim),
+        settlementSurface
+      );
       const settlementMode = deriveSettlementMode(
         claim.status as "pending" | "claimed" | "rescinded",
         payoutTxHash
@@ -304,6 +359,7 @@ export async function GET(request: NextRequest) {
         claimKind: claim.claimKind ?? "bet_payout",
         targetScope: claim.targetScope ?? null,
         sourceFounderBonusId: claim.sourceFounderBonusId ?? null,
+        sourceGameStatsId: claim.sourceGameStatsId ?? null,
         claimStatus: claim.status as "pending" | "claimed" | "rescinded",
         settlementMode,
         payoutTxHash,
@@ -498,21 +554,27 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    const visibleMarketRailRows = marketRailRows.filter((market) => {
+      if (!isWoloMainnet()) return true;
+      if (["open", "closing", "live"].includes(market.status)) return true;
+      return market.leftBettors.length > 0 || market.rightBettors.length > 0 || market.unresolvedIntents.length > 0;
+    });
+
     const payload: AdminUsersRailsPayload = {
       settlementRail: {
         summary: {
-          totalCount: allClaims.length,
-          totalAmountWolo: allClaims.reduce((sum, claim) => sum + claim.amountWolo, 0),
-          pendingCount: allClaims.filter((claim) => claim.status === "pending").length,
-          pendingAmountWolo: allClaims
+          totalCount: visibleClaims.length,
+          totalAmountWolo: visibleClaims.reduce((sum, claim) => sum + claim.amountWolo, 0),
+          pendingCount: visibleClaims.filter((claim) => claim.status === "pending").length,
+          pendingAmountWolo: visibleClaims
             .filter((claim) => claim.status === "pending")
             .reduce((sum, claim) => sum + claim.amountWolo, 0),
-          claimedCount: allClaims.filter((claim) => claim.status === "claimed").length,
-          claimedAmountWolo: allClaims
+          claimedCount: visibleClaims.filter((claim) => claim.status === "claimed").length,
+          claimedAmountWolo: visibleClaims
             .filter((claim) => claim.status === "claimed")
             .reduce((sum, claim) => sum + claim.amountWolo, 0),
-          rescindedCount: allClaims.filter((claim) => claim.status === "rescinded").length,
-          rescindedAmountWolo: allClaims
+          rescindedCount: visibleClaims.filter((claim) => claim.status === "rescinded").length,
+          rescindedAmountWolo: visibleClaims
             .filter((claim) => claim.status === "rescinded")
             .reduce((sum, claim) => sum + claim.amountWolo, 0),
           autoSettledCount: settlementRows.filter((row) => row.settlementMode === "auto_settled")
@@ -521,12 +583,17 @@ export async function GET(request: NextRequest) {
             .filter((row) => row.settlementMode === "auto_settled")
             .reduce((sum, row) => sum + row.amountWolo, 0),
           failedCount: settlementRows.filter(
-            (row) => Boolean(row.errorState) && !isAwaitingVerifiedWalletLinkDetail(row.errorState)
+            (row) =>
+              Boolean(row.errorState) &&
+              !isAwaitingVerifiedWalletLinkDetail(row.errorState) &&
+              !isSettlementUnavailableDetail(row.errorState)
           ).length,
           failedAmountWolo: settlementRows
             .filter(
               (row) =>
-                Boolean(row.errorState) && !isAwaitingVerifiedWalletLinkDetail(row.errorState)
+                Boolean(row.errorState) &&
+                !isAwaitingVerifiedWalletLinkDetail(row.errorState) &&
+                !isSettlementUnavailableDetail(row.errorState)
             )
             .reduce((sum, row) => sum + row.amountWolo, 0),
         },
@@ -540,32 +607,35 @@ export async function GET(request: NextRequest) {
           escrowConfigError: escrowRuntime.configError,
           settlementServiceConfigured: settlementSurface.settlementServiceConfigured,
           settlementAuthConfigured: settlementSurface.settlementAuthConfigured,
+          settlementPayoutReady: settlementSurface.payoutReady,
+          settlementHealthFailureCode: settlementSurface.settlementHealthFailureCode,
           settlementExecutionMode: settlementSurface.payoutExecutionMode,
           groupedRunCapability: settlementSurface.groupedRunCapability,
           escrowVerifyCapability: settlementSurface.escrowVerifyCapability,
           escrowRecentCapability: settlementSurface.escrowRecentCapability,
           settlementSurfaceWarnings: settlementSurface.warnings,
           settlementSurfaceDetail: settlementSurface.detail,
-          openCount: marketRailRows.filter((market) =>
+          openCount: visibleMarketRailRows.filter((market) =>
             ["open", "closing", "live"].includes(market.status)
           ).length,
-          liveCount: marketRailRows.filter((market) => market.status === "live").length,
-          pendingSettlementCount: marketRailRows.filter(
+          liveCount: visibleMarketRailRows.filter((market) => market.status === "live").length,
+          pendingSettlementCount: visibleMarketRailRows.filter(
             (market) =>
               market.settlementStatus === "pending" || market.settlementStatus === "dry_run"
           ).length,
-          failedSettlementCount: marketRailRows.filter(
+          failedSettlementCount: visibleMarketRailRows.filter(
             (market) =>
               market.settlementStatus === "failed" || market.settlementStatus === "partial"
           ).length,
-          unresolvedIntentCount: marketRailRows.reduce(
+          unresolvedIntentCount: visibleMarketRailRows.reduce(
             (sum, market) => sum + market.unresolvedIntents.length,
             0
           ),
-          totalPotWolo: marketRailRows.reduce((sum, market) => sum + market.totalPotWolo, 0),
+          totalPotWolo: visibleMarketRailRows.reduce((sum, market) => sum + market.totalPotWolo, 0),
         },
-        rows: marketRailRows,
+        rows: visibleMarketRailRows,
       },
+      walletFriction,
       watcherDownloads,
     };
 

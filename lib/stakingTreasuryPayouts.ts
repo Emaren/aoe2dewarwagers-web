@@ -1,8 +1,14 @@
 import type { Prisma, PrismaClient } from "@/lib/generated/prisma";
-import { buildWoloRestTxLookupUrl, toUwoLoAmount } from "@/lib/woloChain";
+import {
+  buildWoloRestTxLookupUrl,
+  getWoloMainnetDisplayStartAt,
+  isWoloMainnet,
+  toUwoLoAmount,
+} from "@/lib/woloChain";
 import { resolveCommunityTreasuryAddressConfig } from "@/lib/woloCommunityTreasury";
 import {
   executeWoloSettlementRun,
+  getWoloPayoutExecutionBlocker,
   getWoloPayoutSignerRuntime,
   hasWoloPayoutExecutionConfigured,
   validateWoloAddress,
@@ -239,7 +245,10 @@ function buildBlockers(row: StakingTreasuryDistributionRow) {
     blockers.push("WOLO_BET_PAYOUT_ADDRESS is not configured for the Bet Payout signer.");
   }
   if (!hasWoloPayoutExecutionConfigured()) {
-    blockers.push("WOLO payout execution is not configured in this environment.");
+    blockers.push(
+      getWoloPayoutExecutionBlocker() ||
+        "WOLO payout execution is not configured in this environment."
+    );
   }
   if (normalizePayoutStatus(row.treasuryPayoutStatus) === "PAID" && !row.treasuryPayoutTxHash) {
     blockers.push("Treasury payout is marked PAID but has no tx hash; operator review is required.");
@@ -535,7 +544,9 @@ function summarizePlans(
     ok: true,
     checkedAt: new Date().toISOString(),
     dryRun,
-    backfillDistributionIds: [...STAKING_TREASURY_PAYOUT_BACKFILL_DISTRIBUTION_IDS],
+    backfillDistributionIds: isWoloMainnet()
+      ? []
+      : [...STAKING_TREASURY_PAYOUT_BACKFILL_DISTRIBUTION_IDS],
     signer: {
       role: "payout",
       signingRail: resolveSigningRail(),
@@ -575,10 +586,15 @@ export async function loadStakingTreasuryPayoutPlans(
   const ids = options?.ids?.filter((id) => Number.isInteger(id) && id > 0) ?? [];
   const take = Math.max(1, Math.min(options?.take ?? 40, 100));
   const idFilter = ids.length > 0 ? { id: { in: ids } } : {};
+  const mainnetFilter =
+    ids.length === 0 && isWoloMainnet()
+      ? { distributionDate: { gte: getWoloMainnetDisplayStartAt() } }
+      : {};
   const [openRows, paidRows] = await Promise.all([
     prisma.stakingRewardDistribution.findMany({
       where: {
         ...idFilter,
+        ...mainnetFilter,
         status: "FINALIZED",
         treasuryPoolWolo: { gt: 0 },
         treasuryPayoutTxHash: null,
@@ -590,6 +606,7 @@ export async function loadStakingTreasuryPayoutPlans(
     prisma.stakingRewardDistribution.findMany({
       where: {
         ...idFilter,
+        ...mainnetFilter,
         status: "FINALIZED",
         treasuryPoolWolo: { gt: 0 },
         treasuryPayoutTxHash: { not: null },

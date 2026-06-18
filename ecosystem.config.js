@@ -1,14 +1,14 @@
-// /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn/ecosystem.config.js
+// /var/www/app-prodn/ecosystem.config.js
 module.exports = {
   apps: [
     {
       /* ──────────────── process meta ──────────────── */
-      name : 'aoe2dewarwagers-web',
-      cwd  : '/mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn',
+      name : 'app-prodn',
+      cwd  : '/var/www/app-prodn',
 
       // Run the server produced by `next build`
       script : 'node_modules/.bin/next',
-      args   : 'start -H 127.0.0.1 -p 4000',
+      args   : 'start -H 127.0.0.1 -p 3004',
 
       /* ──────────────── environment ──────────────── */
       env: {

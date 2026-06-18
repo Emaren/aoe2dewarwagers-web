@@ -4,7 +4,8 @@ import { toUwoLoAmount } from "@/lib/woloChain";
 import { isWoloBetEscrowEnabled, listRecentEscrowDeposits } from "@/lib/woloBetSettlement";
 
 export const BET_STAKE_INTENT_ORPHAN_AFTER_MS = 15 * 60 * 1000;
-export const BET_STAKE_INTENT_DISCOVERY_WINDOW_MS = 60 * 60 * 1000;
+export const BET_STAKE_INTENT_DISCOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const BET_STAKE_INTENT_PENDING_PROOF_VISIBLE_MS = 24 * 60 * 60 * 1000;
 export const BET_STAKE_INTENT_COUNTABLE_STATUSES = ["recorded"] as const;
 export const BET_STAKE_INTENT_RECOVERABLE_STATUSES = [
   "awaiting_signature",
@@ -17,6 +18,12 @@ export const BET_STAKE_INTENT_RECOVERABLE_STATUSES = [
 export const BET_STAKE_INTENT_VISIBLE_UNRESOLVED_STATUSES = [
   "broadcast_submitted",
   "verified_unrecorded",
+  "failed",
+  "suspect",
+  "orphaned",
+] as const;
+export const BET_STAKE_INTENT_PENDING_PROOF_STATUSES = [
+  "awaiting_signature",
   "failed",
   "suspect",
   "orphaned",
@@ -229,6 +236,26 @@ function isDepositAfterIntent(
   return parsed >= createdAt.getTime() - 2 * 60 * 1000;
 }
 
+function isTerminalBetStakeIntentWithoutBroadcast(intent: {
+  status: string;
+  stakeTxHash: string | null;
+  errorDetail: string | null;
+}) {
+  if (intent.stakeTxHash) return false;
+
+  const status = intent.status.trim().toLowerCase();
+  if (status === "orphaned") return true;
+
+  const detail = (intent.errorDetail || "").trim().toLowerCase();
+  const looksCancelled =
+    detail.includes("cancel") ||
+    detail.includes("rejected") ||
+    detail.includes("denied") ||
+    detail.includes("no usable stake tx");
+
+  return status === "failed" && looksCancelled;
+}
+
 async function discoverEscrowDepositForStakeIntent(
   prisma: BetStakeIntentDb,
   intent: {
@@ -252,7 +279,7 @@ async function discoverEscrowDepositForStakeIntent(
   }
 
   const walletAddress = (intent.walletAddress || "").trim();
-  if (!walletAddress || intent.stakeTxHash) {
+  if (!walletAddress || intent.stakeTxHash || isTerminalBetStakeIntentWithoutBroadcast(intent)) {
     return;
   }
 
@@ -319,7 +346,7 @@ export async function refreshRecoverableBetStakeIntents(
       ...(typeof userId === "number" ? { userId } : {}),
     },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-    take: typeof userId === "number" ? 12 : 40,
+    take: typeof userId === "number" ? 24 : 80,
     select: {
       id: true,
       marketId: true,
@@ -349,7 +376,7 @@ export async function refreshRecoverableBetStakeIntents(
         walletAddress,
         await listRecentEscrowDeposits({
           sender: walletAddress,
-          limit: 20,
+          limit: 50,
         })
       );
     }
@@ -378,13 +405,28 @@ export async function loadViewerBetStakeIntents(
     console.warn("Failed to refresh viewer bet stake intents:", error);
   }
 
+  const pendingProofCutoff = new Date(
+    Date.now() - BET_STAKE_INTENT_PENDING_PROOF_VISIBLE_MS
+  );
+
   return prisma.betStakeIntent.findMany({
     where: {
       userId,
-      status: {
-        in: [...BET_STAKE_INTENT_VISIBLE_UNRESOLVED_STATUSES],
-      },
-      stakeTxHash: { not: null },
+      OR: [
+        {
+          status: {
+            in: [...BET_STAKE_INTENT_VISIBLE_UNRESOLVED_STATUSES],
+          },
+          stakeTxHash: { not: null },
+        },
+        {
+          status: {
+            in: [...BET_STAKE_INTENT_PENDING_PROOF_STATUSES],
+          },
+          stakeTxHash: null,
+          updatedAt: { gte: pendingProofCutoff },
+        },
+      ],
       market: {
         is: {
           status: {

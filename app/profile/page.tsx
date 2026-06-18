@@ -18,6 +18,9 @@ import {
   Bell,
   Clock3,
   Coins,
+  Crown,
+  Gem,
+  ImagePlus,
   LogOut,
   Mail,
   Monitor,
@@ -31,6 +34,7 @@ import {
 import ScheduledMatchCard, {
   CompactScheduledMatchHistoryRow,
 } from "@/components/challenge/ScheduledMatchCard";
+import BrowserStreamStudio from "@/components/streaming/BrowserStreamStudio";
 import {
   LobbyTextColorPicker,
   LobbyThemePicker,
@@ -43,6 +47,12 @@ import TimeDisplayText from "@/components/time/TimeDisplayText";
 import { getLobbyHeroBackground } from "@/components/lobby/lobbyPresentation";
 import SteamLoginButton from "@/components/SteamLoginButton";
 import { useUserAuth } from "@/hooks/useUserAuth";
+import {
+  GENDER_DIVISIONS,
+  REPRESENTED_COUNTRIES,
+  type GenderDivision,
+  type RepresentedCountry,
+} from "@/lib/champions/titles";
 import type { ChallengeHubSnapshot } from "@/lib/challenges";
 import { formatDateTime as formatSiteDateTime } from "@/lib/timeDisplay";
 
@@ -53,6 +63,10 @@ type ProfileResponse = {
   verified: boolean;
   isAdmin: boolean;
   twitchStreamUrl: string | null;
+  representedCountry: RepresentedCountry | null;
+  representedCountryUpdatedAt: string | null;
+  genderDivision: GenderDivision;
+  genderDivisionUpdatedAt: string | null;
   steamId: string | null;
   steamPersonaName: string | null;
   verificationLevel: number;
@@ -60,6 +74,25 @@ type ProfileResponse = {
   pendingClaimAmountWolo: number;
   pendingClaimCount: number;
   pendingClaimLatestCreatedAt: string | null;
+  avatarUrl: string;
+  avatarOptions: Array<{
+    target: string;
+    label: string;
+    url: string;
+  }>;
+  belts: ProfileTitleHolding[];
+  artifacts: ProfileTitleHolding[];
+  earningWoloPerDay: number;
+};
+
+type ProfileTitleHolding = {
+  id: string;
+  type: string;
+  displayName: string;
+  shortName: string;
+  dailyWolo: number;
+  routeHref: string;
+  assetUrl: string;
 };
 
 type WatcherKeyRow = {
@@ -85,6 +118,10 @@ type WoloTransactionRow = {
   status: string;
   occurredAt: string;
   txHash: string | null;
+  proofUrl?: string | null;
+  category?: string;
+  network?: string;
+  riskLabel?: string | null;
 };
 
 type WoloTransactionsResponse = {
@@ -122,8 +159,13 @@ function ProfilePageContent() {
   const [newWatcherKey, setNewWatcherKey] = useState<string | null>(null);
   const [emailDraft, setEmailDraft] = useState("");
   const [twitchDraft, setTwitchDraft] = useState("");
+  const [representedCountryDraft, setRepresentedCountryDraft] = useState<RepresentedCountry | "">("");
+  const [genderDivisionDraft, setGenderDivisionDraft] = useState<GenderDivision>("Man");
   const [savingEmail, setSavingEmail] = useState(false);
   const [savingTwitch, setSavingTwitch] = useState(false);
+  const [savingTitleIdentity, setSavingTitleIdentity] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarSavingTarget, setAvatarSavingTarget] = useState<string | null>(null);
   const [moneyRows, setMoneyRows] = useState<WoloTransactionRow[]>([]);
   const [moneyLoading, setMoneyLoading] = useState(false);
   const [moneyHasMore, setMoneyHasMore] = useState(false);
@@ -151,10 +193,19 @@ function ProfilePageContent() {
 
   const claimName = searchParams?.get("claim_name")?.trim() || "";
   const watcherPairIntent = searchParams?.get("watcher_pair") === "1";
+  const streamSessionKey =
+    searchParams?.get("stream_session")?.trim() ||
+    searchParams?.get("sessionKey")?.trim() ||
+    "";
+  const streamTitle = searchParams?.get("stream_title")?.trim() || "";
+  const watcherStreamIntent = searchParams?.get("watcher_stream") === "1" || Boolean(streamSessionKey);
 
   const returnToParams = new URLSearchParams();
   if (claimName) returnToParams.set("claim_name", claimName);
   if (watcherPairIntent) returnToParams.set("watcher_pair", "1");
+  if (watcherStreamIntent) returnToParams.set("watcher_stream", "1");
+  if (streamSessionKey) returnToParams.set("stream_session", streamSessionKey);
+  if (streamTitle) returnToParams.set("stream_title", streamTitle);
 
   const profileReturnTo = returnToParams.toString()
     ? `/profile?${returnToParams.toString()}`
@@ -298,6 +349,14 @@ function ProfilePageContent() {
   }, [profile?.twitchStreamUrl]);
 
   useEffect(() => {
+    setRepresentedCountryDraft(profile?.representedCountry ?? "");
+  }, [profile?.representedCountry]);
+
+  useEffect(() => {
+    setGenderDivisionDraft(profile?.genderDivision ?? "Man");
+  }, [profile?.genderDivision]);
+
+  useEffect(() => {
     if (!claimName || claimSeedApplied || profile?.inGameName) return;
     setStatus(
       `Steam linked. Replay proof will lock in ${claimName} after your first confirmed upload.`
@@ -408,6 +467,112 @@ function ProfilePageContent() {
     }
   }, [twitchDraft]);
 
+  const saveTitleIdentity = useCallback(async () => {
+    setSavingTitleIdentity(true);
+    setStatus("");
+
+    try {
+      const response = await fetch("/api/user/me", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          representedCountry: representedCountryDraft || null,
+          genderDivision: genderDivisionDraft,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as
+        | (ProfileResponse & { detail?: string })
+        | null;
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.detail || "Title identity save failed.");
+      }
+
+      setProfile((current) =>
+        current
+          ? {
+              ...current,
+              representedCountry: payload.representedCountry,
+              representedCountryUpdatedAt: payload.representedCountryUpdatedAt,
+              genderDivision: payload.genderDivision,
+              genderDivisionUpdatedAt: payload.genderDivisionUpdatedAt,
+            }
+          : current
+      );
+      setStatus("Title identity saved.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Title identity save failed.");
+    } finally {
+      setSavingTitleIdentity(false);
+    }
+  }, [genderDivisionDraft, representedCountryDraft]);
+
+  const chooseAvatarPreset = useCallback(async (target: string) => {
+    setAvatarSavingTarget(target);
+    setStatus("");
+
+    try {
+      const response = await fetch("/api/user/avatar", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ preset: target }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { avatarUrl?: string; detail?: string }
+        | null;
+
+      if (!response.ok || !payload?.avatarUrl) {
+        throw new Error(payload?.detail || "Avatar update failed.");
+      }
+
+      setProfile((current) =>
+        current ? { ...current, avatarUrl: payload.avatarUrl ?? current.avatarUrl } : current
+      );
+      setStatus("Avatar updated.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Avatar update failed.");
+    } finally {
+      setAvatarSavingTarget(null);
+    }
+  }, []);
+
+  const uploadProfileAvatar = useCallback(async (file: File | null) => {
+    if (!file) return;
+    setAvatarUploading(true);
+    setStatus("");
+
+    try {
+      const body = new FormData();
+      body.set("file", file);
+
+      const response = await fetch("/api/user/avatar", {
+        method: "POST",
+        body,
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { avatarUrl?: string; detail?: string }
+        | null;
+
+      if (!response.ok || !payload?.avatarUrl) {
+        throw new Error(payload?.detail || "Avatar upload failed.");
+      }
+
+      setProfile((current) =>
+        current ? { ...current, avatarUrl: payload.avatarUrl ?? current.avatarUrl } : current
+      );
+      setStatus("Avatar uploaded.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Avatar upload failed.");
+    } finally {
+      setAvatarUploading(false);
+    }
+  }, []);
+
   const createWatcherKey = useCallback(
     async ({ pairToWatcher = false } = {}) => {
       setMintingWatcherKey(true);
@@ -491,75 +656,187 @@ function ProfilePageContent() {
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] xl:items-start">
           <div className="min-w-0">
             <div className="text-xs uppercase tracking-[0.35em] text-white/45">Identity</div>
-            <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
+            <div className="mt-4 grid gap-4 md:grid-cols-[12.5rem_minmax(0,1fr)] md:items-start">
+              <ProfileAvatarPanel
+                profile={profile}
+                displayName={displayName}
+                uploading={avatarUploading}
+                savingTarget={avatarSavingTarget}
+                onPreset={(target) => void chooseAvatarPreset(target)}
+                onUpload={(file) => void uploadProfileAvatar(file)}
+              />
               <div className="min-w-0">
-                <h1 className="truncate text-3xl font-semibold sm:text-4xl">{displayName}</h1>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200">
-                    UID {truncateUid(uid)}
-                  </span>
-                  <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-100">
-                    Verification level {profile?.verificationLevel ?? 0}
-                  </span>
-                  {profile?.verificationMethod ? (
-                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200">
-                      {profile.verificationMethod}
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <IdentityCard
-                title="Competitive name"
-                value={confirmedName}
-                meta={profile?.inGameName ? "Replay-backed" : "Waiting for first confirmed replay"}
-              />
-              <IdentityCard
-                title="Steam"
-                value={profile?.steamPersonaName || "Unknown"}
-                meta={profile?.steamId ? `Steam ID ${profile.steamId}` : "Not connected"}
-              />
-            </div>
-
-            <div className="mt-4 rounded-[1.35rem] border border-white/10 bg-white/[0.035] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <Monitor className="h-4 w-4 text-sky-100" aria-hidden="true" />
-                  <div>
-                    <div className="text-[10px] uppercase tracking-[0.28em] text-slate-500">
-                      Broadcast
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <h1 className="truncate text-3xl font-semibold sm:text-4xl">{displayName}</h1>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200">
+                        UID {truncateUid(uid)}
+                      </span>
+                      <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-100">
+                        Verification level {profile?.verificationLevel ?? 0}
+                      </span>
+                      {profile?.verificationMethod ? (
+                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200">
+                          {profile.verificationMethod}
+                        </span>
+                      ) : null}
+                      <span className="rounded-full border border-amber-200/20 bg-amber-300/10 px-3 py-1 text-xs font-semibold text-amber-100">
+                        Currently Earning {profile?.earningWoloPerDay ?? 0} WOLO/day
+                      </span>
                     </div>
-                    <div className="text-sm font-semibold text-white">Twitch player cam</div>
                   </div>
                 </div>
-                {profile?.twitchStreamUrl ? (
-                  <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-100">
-                    Wired
-                  </span>
-                ) : (
-                  <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-slate-300">
-                    Empty
-                  </span>
-                )}
+
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  <IdentityCard
+                    title="Competitive name"
+                    value={confirmedName}
+                    meta={profile?.inGameName ? "Replay-backed" : "Waiting for first confirmed replay"}
+                  />
+                  <IdentityCard
+                    title="Steam"
+                    value={profile?.steamPersonaName || "Unknown"}
+                    meta={profile?.steamId ? `Steam ID ${profile.steamId}` : "Not connected"}
+                  />
+                </div>
+
+                <ProfileTitleInventory profile={profile} />
               </div>
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                <input
-                  type="url"
-                  value={twitchDraft}
-                  onChange={(event) => setTwitchDraft(event.target.value)}
-                  placeholder="https://www.twitch.tv/channel"
-                  className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-sky-300/45"
-                />
+            </div>
+
+            <div className="mt-4 rounded-[1.35rem] border border-amber-200/14 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.14),_transparent_30%),linear-gradient(135deg,_rgba(18,13,8,0.72),_rgba(5,12,22,0.82))] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-amber-100/72">
+                    <Trophy className="h-4 w-4" />
+                    Title Identity
+                  </div>
+                  <h2 className="mt-2 text-xl font-semibold text-white">Set your title lanes.</h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                    National belts use Representing Country. Women&apos;s Champion eligibility uses Gender Division.
+                    More nations are coming.
+                  </p>
+                </div>
+                <Link
+                  href="/champions"
+                  className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white/85 transition hover:border-amber-200/35 hover:text-amber-100"
+                >
+                  Champions
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium text-slate-200">Representing Country</span>
+                  <select
+                    value={representedCountryDraft}
+                    onChange={(event) =>
+                      setRepresentedCountryDraft(event.target.value as RepresentedCountry | "")
+                    }
+                    className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white outline-none transition focus:border-amber-300/45"
+                  >
+                    <option value="">Choose country</option>
+                    {REPRESENTED_COUNTRIES.map((country) => (
+                      <option key={country} value={country}>
+                        {country}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium text-slate-200">Gender Division</span>
+                  <div className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-slate-950/70 p-1">
+                    {GENDER_DIVISIONS.map((division) => {
+                      const active = genderDivisionDraft === division;
+                      return (
+                        <button
+                          key={division}
+                          type="button"
+                          onClick={() => setGenderDivisionDraft(division)}
+                          className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                            active
+                              ? "bg-amber-300 text-slate-950"
+                              : "text-slate-300 hover:bg-white/[0.06] hover:text-white"
+                          }`}
+                        >
+                          {division}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </label>
+
                 <button
                   type="button"
-                  onClick={saveTwitchStream}
-                  disabled={savingTwitch}
-                  className="rounded-full bg-sky-200 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-55"
+                  onClick={() => void saveTitleIdentity()}
+                  disabled={savingTitleIdentity}
+                  className="rounded-full bg-amber-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {savingTwitch ? "Saving..." : "Save Stream"}
+                  {savingTitleIdentity ? "Saving..." : "Save"}
                 </button>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
+                <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1">
+                  Current country: {profile?.representedCountry || "Not set"}
+                </span>
+                <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1">
+                  Current division: {profile?.genderDivision || "Man"}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              <BrowserStreamStudio
+                sessionKey={streamSessionKey || undefined}
+                title={streamTitle || (confirmedName ? `${confirmedName} live` : "AoE2DE War Wagers live")}
+                playerLabel={confirmedName}
+                watcherIntent={watcherStreamIntent}
+              />
+
+              <div className="rounded-[1.35rem] border border-white/10 bg-white/[0.035] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Monitor className="h-4 w-4 text-sky-100" aria-hidden="true" />
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.28em] text-slate-500">
+                        External Fallback
+                      </div>
+                      <div className="mt-1 text-base font-semibold text-white">
+                        Twitch channel
+                      </div>
+                    </div>
+                  </div>
+                  {profile?.twitchStreamUrl ? (
+                    <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-100">
+                      Saved
+                    </span>
+                  ) : (
+                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
+                      Optional
+                    </span>
+                  )}
+                </div>
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                  <input
+                    type="url"
+                    value={twitchDraft}
+                    onChange={(event) => setTwitchDraft(event.target.value)}
+                    placeholder="https://www.twitch.tv/channel"
+                    className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-sky-300/45"
+                  />
+                  <button
+                    type="button"
+                    onClick={saveTwitchStream}
+                    disabled={savingTwitch}
+                    className="rounded-full border border-sky-200/30 bg-sky-200/10 px-5 py-3 text-sm font-semibold text-sky-100 transition hover:bg-sky-200/15 disabled:cursor-not-allowed disabled:opacity-55"
+                  >
+                    {savingTwitch ? "Saving..." : "Save"}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1022,6 +1299,22 @@ function ProfilePageContent() {
 function WoloTransactionLine({ row }: { row: WoloTransactionRow }) {
   const isIn = row.direction === "in";
   const Icon = isIn ? ArrowDownLeft : ArrowUpRight;
+  const categoryLabel =
+    row.category === "chain_confirmed"
+      ? "confirmed chain"
+      : row.category === "app_retry"
+        ? "retry-needed claim"
+        : row.category === "app_pending"
+          ? "app-side pending"
+          : row.network === "mainnet"
+            ? "mainnet"
+            : "app ledger";
+  const categoryClass =
+    row.category === "chain_confirmed"
+      ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-100"
+      : row.category === "app_retry" || row.riskLabel
+        ? "border-amber-300/20 bg-amber-400/10 text-amber-100"
+        : "border-white/10 bg-white/[0.04] text-slate-300";
 
   return (
     <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
@@ -1051,10 +1344,33 @@ function WoloTransactionLine({ row }: { row: WoloTransactionRow }) {
           />
           <span>·</span>
           <span className="truncate">{row.status}</span>
+          <span>·</span>
+          <span className={`rounded-full border px-2 py-0.5 ${categoryClass}`}>
+            {categoryLabel}
+          </span>
+          {row.riskLabel ? (
+            <>
+              <span>·</span>
+              <span className="rounded-full border border-rose-300/25 bg-rose-400/10 px-2 py-0.5 text-rose-100">
+                {row.riskLabel}
+              </span>
+            </>
+          ) : null}
           {row.txHash ? (
             <>
               <span>·</span>
-              <span className="truncate font-mono">{row.txHash.slice(0, 10)}…</span>
+              {row.proofUrl ? (
+                <a
+                  href={row.proofUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="truncate font-mono text-cyan-200 transition hover:text-white"
+                >
+                  {row.txHash.slice(0, 10)}…
+                </a>
+              ) : (
+                <span className="truncate font-mono">{row.txHash.slice(0, 10)}…</span>
+              )}
             </>
           ) : null}
         </div>
@@ -1078,6 +1394,141 @@ function IdentityCard({
       <div className="mt-3 text-xl font-semibold text-white break-words">{value}</div>
       <div className="mt-2 text-sm text-slate-300">{meta}</div>
     </div>
+  );
+}
+
+function ProfileAvatarPanel({
+  profile,
+  displayName,
+  uploading,
+  savingTarget,
+  onPreset,
+  onUpload,
+}: {
+  profile: ProfileResponse | null;
+  displayName: string;
+  uploading: boolean;
+  savingTarget: string | null;
+  onPreset: (target: string) => void;
+  onUpload: (file: File | null) => void;
+}) {
+  const avatarUrl = profile?.avatarUrl || "/champions/players/silhouette.png";
+  const options = profile?.avatarOptions ?? [];
+
+  return (
+    <div className="rounded-[1.5rem] border border-amber-200/12 bg-[linear-gradient(135deg,rgba(255,255,255,0.05),rgba(255,255,255,0.018))] p-4">
+      <div className="relative mx-auto aspect-[0.78/1] w-full max-w-[10.5rem] overflow-hidden rounded-[1.35rem] border border-amber-200/16 bg-black/30">
+        <img
+          src={avatarUrl}
+          alt={`${displayName} avatar`}
+          className="h-full w-full object-cover object-top"
+        />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/72 to-transparent" />
+      </div>
+
+      <div className="mt-4 grid grid-cols-5 gap-1.5">
+        {options.map((option) => (
+          <button
+            key={option.target}
+            type="button"
+            onClick={() => onPreset(option.target)}
+            disabled={uploading || Boolean(savingTarget)}
+            className="relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-black/20 transition hover:border-amber-200/35 disabled:cursor-not-allowed disabled:opacity-55"
+            title={savingTarget === option.target ? "Saving..." : option.label}
+          >
+            <img src={option.url} alt="" className="h-full w-full object-cover object-top" />
+          </button>
+        ))}
+      </div>
+
+      <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-full border border-amber-200/18 px-3 py-2 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/10">
+        <ImagePlus className="h-4 w-4" />
+        {uploading ? "Uploading..." : "Upload Avatar"}
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="hidden"
+          disabled={uploading}
+          onChange={(event) => {
+            const file = event.target.files?.[0] ?? null;
+            onUpload(file);
+            event.target.value = "";
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
+function ProfileTitleInventory({ profile }: { profile: ProfileResponse | null }) {
+  const belts = profile?.belts ?? [];
+  const artifacts = profile?.artifacts ?? [];
+
+  return (
+    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+      <ProfileHoldingRail
+        icon={Crown}
+        title="Belts"
+        empty="No active belts yet."
+        holdings={belts}
+      />
+      <ProfileHoldingRail
+        icon={Gem}
+        title="Artifacts"
+        empty="No artifacts held yet."
+        holdings={artifacts}
+      />
+    </div>
+  );
+}
+
+function ProfileHoldingRail({
+  icon: Icon,
+  title,
+  empty,
+  holdings,
+}: {
+  icon: typeof Crown;
+  title: string;
+  empty: string;
+  holdings: ProfileTitleHolding[];
+}) {
+  return (
+    <div className="rounded-[1.35rem] border border-white/10 bg-white/[0.035] p-4">
+      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-slate-500">
+        <Icon className="h-4 w-4" />
+        {title}
+      </div>
+      <div className="mt-3 grid gap-2">
+        {holdings.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/10 bg-black/16 px-3 py-4 text-sm text-slate-400">
+            {empty}
+          </div>
+        ) : (
+          holdings.map((holding) => <ProfileHoldingCard key={holding.id} holding={holding} />)
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProfileHoldingCard({ holding }: { holding: ProfileTitleHolding }) {
+  return (
+    <Link
+      href={holding.routeHref}
+      className="grid grid-cols-[4rem_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border border-amber-200/10 bg-black/18 px-3 py-2.5 transition hover:border-amber-200/28 hover:bg-amber-300/8"
+    >
+      <span className="flex h-14 w-16 items-center justify-center overflow-hidden rounded-xl bg-black/20">
+        <img src={holding.assetUrl} alt="" className="max-h-full max-w-full object-contain" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-semibold text-white">{holding.shortName}</span>
+        <span className="mt-0.5 block truncate text-xs text-slate-500">{holding.displayName}</span>
+      </span>
+      <span className="rounded-full border border-amber-200/16 bg-amber-300/10 px-2.5 py-1 text-[11px] font-semibold text-amber-100">
+        {holding.dailyWolo} WOLO/day
+      </span>
+    </Link>
   );
 }
 

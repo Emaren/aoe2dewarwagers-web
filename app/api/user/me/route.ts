@@ -7,6 +7,14 @@ import { fetchUserVerification, toUserApi } from "@/lib/userDto";
 import { loadPendingWoloClaimSummaryForUser } from "@/lib/pendingWoloClaims";
 import { resolveRequestUid, resolveRequestEmail } from "@/lib/requestIdentity";
 import { validateWoloAddress } from "@/lib/woloBetSettlement";
+import { allChampionTitles, type ChampionTitleDefinition } from "@/lib/champions/titles";
+import { managedMediaPublicUrl, resolveManagedMediaUrl } from "@/lib/managedMediaAssets";
+import {
+  GENDER_DIVISIONS,
+  REPRESENTED_COUNTRIES,
+  type GenderDivision,
+  type RepresentedCountry,
+} from "@/lib/champions/titles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,6 +77,40 @@ function normalizeTwitchStreamUrl(raw: unknown) {
   return `https://www.twitch.tv/${channel.slice(0, 80)}`;
 }
 
+function normalizeRepresentedCountry(raw: unknown): RepresentedCountry | null {
+  if (raw === null || typeof raw === "undefined") return null;
+  if (typeof raw !== "string") {
+    throw new Error("Representing Country must be text.");
+  }
+
+  const value = raw.trim();
+  if (!value) return null;
+
+  const country = REPRESENTED_COUNTRIES.find(
+    (option) => option.toLowerCase() === value.toLowerCase()
+  );
+  if (!country) {
+    throw new Error("Choose Canada, USA, Mexico, or UK as Representing Country.");
+  }
+
+  return country;
+}
+
+function normalizeGenderDivision(raw: unknown): GenderDivision {
+  if (typeof raw !== "string") {
+    throw new Error("Gender Division must be Man or Woman.");
+  }
+
+  const division = GENDER_DIVISIONS.find(
+    (option) => option.toLowerCase() === raw.trim().toLowerCase()
+  );
+  if (!division) {
+    throw new Error("Choose Man or Woman as Gender Division.");
+  }
+
+  return division;
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
@@ -100,10 +142,76 @@ const USER_SELECT = {
   lockName: true,
   walletAddress: true,
   twitchStreamUrl: true,
+  representedCountry: true,
+  representedCountryUpdatedAt: true,
+  genderDivision: true,
+  genderDivisionUpdatedAt: true,
   createdAt: true,
   lastSeen: true,
   isAdmin: true,
 } as const;
+
+const AVATAR_PRESETS = [
+  { target: "silhouette", label: "Silhouette" },
+  { target: "sniper", label: "Sniper" },
+  { target: "jim", label: "Jim" },
+  { target: "julio-alvarez", label: "Julio" },
+  { target: "emaren", label: "Emaren" },
+] as const;
+
+function normalizeNameKey(value: string | null | undefined) {
+  return (value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function titleHeldByUser(title: ChampionTitleDefinition, userNames: Set<string>) {
+  return title.holders.some((holder) => userNames.has(normalizeNameKey(holder.name)));
+}
+
+function titleHoldingPayload(title: ChampionTitleDefinition) {
+  const assetKind = title.type === "designation" ? "artifact" : "belt";
+
+  return {
+    id: title.id,
+    type: title.type,
+    displayName: title.displayName,
+    shortName: title.shortName,
+    dailyWolo: title.dailyWolo,
+    routeHref: title.routeHref,
+    assetUrl: managedMediaPublicUrl(assetKind, title.id, title.assetUrl),
+  };
+}
+
+async function buildProfilePresentation(
+  prisma: ReturnType<typeof getPrisma>,
+  user: { uid: string; inGameName: string | null },
+  steamPersonaName: string | null
+) {
+  const userNames = new Set(
+    [user.inGameName, steamPersonaName]
+      .map(normalizeNameKey)
+      .filter(Boolean)
+  );
+  const heldTitles = allChampionTitles.filter((title) => titleHeldByUser(title, userNames));
+  const belts = heldTitles.filter((title) => title.type !== "designation").map(titleHoldingPayload);
+  const artifacts = heldTitles.filter((title) => title.type === "designation").map(titleHoldingPayload);
+  const earningWoloPerDay = heldTitles.reduce((sum, title) => sum + title.dailyWolo, 0);
+
+  return {
+    avatarUrl: await resolveManagedMediaUrl(
+      prisma,
+      "avatar",
+      `user-${user.uid}`,
+      "/champions/players/silhouette.png"
+    ),
+    avatarOptions: AVATAR_PRESETS.map((option) => ({
+      ...option,
+      url: managedMediaPublicUrl("avatar", option.target),
+    })),
+    belts,
+    artifacts,
+    earningWoloPerDay,
+  };
+}
 
 export async function GET(request: NextRequest) {
   const uid = await resolveRequestUid(request);
@@ -133,8 +241,14 @@ export async function GET(request: NextRequest) {
           inGameName: refreshedUser.inGameName,
           steamPersonaName: verification.steamPersonaName ?? null,
         });
+        const presentation = await buildProfilePresentation(
+          prisma,
+          refreshedUser,
+          verification.steamPersonaName ?? null
+        );
         return NextResponse.json({
           ...toUserApi(refreshedUser, verification),
+          ...presentation,
           pendingClaimAmountWolo: claimSummary.pendingAmountWolo,
           pendingClaimCount: claimSummary.pendingCount,
           pendingClaimLatestCreatedAt: claimSummary.latestCreatedAt,
@@ -148,9 +262,15 @@ export async function GET(request: NextRequest) {
     inGameName: user.inGameName,
     steamPersonaName: verification.steamPersonaName ?? null,
   });
+  const presentation = await buildProfilePresentation(
+    prisma,
+    user,
+    verification.steamPersonaName ?? null
+  );
 
   return NextResponse.json({
     ...toUserApi(user, verification),
+    ...presentation,
     pendingClaimAmountWolo: claimSummary.pendingAmountWolo,
     pendingClaimCount: claimSummary.pendingCount,
     pendingClaimLatestCreatedAt: claimSummary.latestCreatedAt,
@@ -183,6 +303,14 @@ export async function POST(request: NextRequest) {
     Object.prototype.hasOwnProperty.call(body, "twitchStreamUrl") ||
     Object.prototype.hasOwnProperty.call(body, "twitch_stream_url");
   let incomingTwitchStreamUrl: string | null = null;
+  const hasRepresentedCountryUpdate =
+    Object.prototype.hasOwnProperty.call(body, "representedCountry") ||
+    Object.prototype.hasOwnProperty.call(body, "represented_country");
+  const hasGenderDivisionUpdate =
+    Object.prototype.hasOwnProperty.call(body, "genderDivision") ||
+    Object.prototype.hasOwnProperty.call(body, "gender_division");
+  let incomingRepresentedCountry: RepresentedCountry | null = null;
+  let incomingGenderDivision: GenderDivision | null = null;
 
   if (hasTwitchUpdate) {
     try {
@@ -194,6 +322,36 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       return NextResponse.json(
         { detail: error instanceof Error ? error.message : "Invalid Twitch stream URL." },
+        { status: 400 }
+      );
+    }
+  }
+
+  if (hasRepresentedCountryUpdate) {
+    try {
+      incomingRepresentedCountry = normalizeRepresentedCountry(
+        Object.prototype.hasOwnProperty.call(body, "representedCountry")
+          ? body.representedCountry
+          : body.represented_country
+      );
+    } catch (error) {
+      return NextResponse.json(
+        { detail: error instanceof Error ? error.message : "Invalid Representing Country." },
+        { status: 400 }
+      );
+    }
+  }
+
+  if (hasGenderDivisionUpdate) {
+    try {
+      incomingGenderDivision = normalizeGenderDivision(
+        Object.prototype.hasOwnProperty.call(body, "genderDivision")
+          ? body.genderDivision
+          : body.gender_division
+      );
+    } catch (error) {
+      return NextResponse.json(
+        { detail: error instanceof Error ? error.message : "Invalid Gender Division." },
         { status: 400 }
       );
     }
@@ -249,6 +407,18 @@ export async function POST(request: NextRequest) {
             twitchStreamUrl: hasTwitchUpdate
               ? incomingTwitchStreamUrl
               : byEmail.twitchStreamUrl,
+            representedCountry: hasRepresentedCountryUpdate
+              ? incomingRepresentedCountry
+              : byEmail.representedCountry,
+            representedCountryUpdatedAt: hasRepresentedCountryUpdate
+              ? new Date()
+              : byEmail.representedCountryUpdatedAt,
+            genderDivision: hasGenderDivisionUpdate
+              ? incomingGenderDivision!
+              : byEmail.genderDivision || "Man",
+            genderDivisionUpdatedAt: hasGenderDivisionUpdate
+              ? new Date()
+              : byEmail.genderDivisionUpdatedAt,
           },
           select: USER_SELECT,
         });
@@ -266,6 +436,10 @@ export async function POST(request: NextRequest) {
           inGameName: incomingName ? normalizeInGameName(incomingName) : null,
           walletAddress: incomingWalletAddress,
           twitchStreamUrl: hasTwitchUpdate ? incomingTwitchStreamUrl : null,
+          representedCountry: hasRepresentedCountryUpdate ? incomingRepresentedCountry : null,
+          representedCountryUpdatedAt: hasRepresentedCountryUpdate ? new Date() : null,
+          genderDivision: hasGenderDivisionUpdate ? incomingGenderDivision! : "Man",
+          genderDivisionUpdatedAt: hasGenderDivisionUpdate ? new Date() : null,
           isAdmin: false,
         },
         select: USER_SELECT,
@@ -289,6 +463,18 @@ export async function POST(request: NextRequest) {
               twitchStreamUrl: hasTwitchUpdate
                 ? incomingTwitchStreamUrl
                 : byEmail.twitchStreamUrl,
+              representedCountry: hasRepresentedCountryUpdate
+                ? incomingRepresentedCountry
+                : byEmail.representedCountry,
+              representedCountryUpdatedAt: hasRepresentedCountryUpdate
+                ? new Date()
+                : byEmail.representedCountryUpdatedAt,
+              genderDivision: hasGenderDivisionUpdate
+                ? incomingGenderDivision!
+                : byEmail.genderDivision || "Man",
+              genderDivisionUpdatedAt: hasGenderDivisionUpdate
+                ? new Date()
+                : byEmail.genderDivisionUpdatedAt,
             },
             select: USER_SELECT,
           });
@@ -318,8 +504,19 @@ export async function POST(request: NextRequest) {
     incomingWalletAddress !== (existing.walletAddress ?? "");
   const wantsTwitchUpdate =
     hasTwitchUpdate && incomingTwitchStreamUrl !== (existing.twitchStreamUrl ?? null);
+  const wantsRepresentedCountryUpdate =
+    hasRepresentedCountryUpdate && incomingRepresentedCountry !== (existing.representedCountry ?? null);
+  const wantsGenderDivisionUpdate =
+    hasGenderDivisionUpdate && incomingGenderDivision !== (existing.genderDivision || "Man");
 
-  if (!wantsEmailUpdate && !wantsNameUpdate && !wantsWalletUpdate && !wantsTwitchUpdate) {
+  if (
+    !wantsEmailUpdate &&
+    !wantsNameUpdate &&
+    !wantsWalletUpdate &&
+    !wantsTwitchUpdate &&
+    !wantsRepresentedCountryUpdate &&
+    !wantsGenderDivisionUpdate
+  ) {
     return NextResponse.json(toUserApi(existing, await fetchUserVerification(prisma, existing.uid)));
   }
 
@@ -346,6 +543,18 @@ export async function POST(request: NextRequest) {
           twitchStreamUrl: wantsTwitchUpdate
             ? incomingTwitchStreamUrl
             : existing.twitchStreamUrl,
+          representedCountry: wantsRepresentedCountryUpdate
+            ? incomingRepresentedCountry
+            : existing.representedCountry,
+          representedCountryUpdatedAt: wantsRepresentedCountryUpdate
+            ? new Date()
+            : existing.representedCountryUpdatedAt,
+          genderDivision: wantsGenderDivisionUpdate
+            ? incomingGenderDivision!
+            : existing.genderDivision || "Man",
+          genderDivisionUpdatedAt: wantsGenderDivisionUpdate
+            ? new Date()
+            : existing.genderDivisionUpdatedAt,
           verified: false,
           lockName: false,
         },
@@ -389,6 +598,18 @@ export async function POST(request: NextRequest) {
         twitchStreamUrl: wantsTwitchUpdate
           ? incomingTwitchStreamUrl
           : existing.twitchStreamUrl,
+        representedCountry: wantsRepresentedCountryUpdate
+          ? incomingRepresentedCountry
+          : existing.representedCountry,
+        representedCountryUpdatedAt: wantsRepresentedCountryUpdate
+          ? new Date()
+          : existing.representedCountryUpdatedAt,
+        genderDivision: wantsGenderDivisionUpdate
+          ? incomingGenderDivision!
+          : existing.genderDivision || "Man",
+        genderDivisionUpdatedAt: wantsGenderDivisionUpdate
+          ? new Date()
+          : existing.genderDivisionUpdatedAt,
       },
       select: USER_SELECT,
     });

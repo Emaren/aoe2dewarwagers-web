@@ -1,6 +1,6 @@
 # AoE2DEWarWagers Operator Runbook
 
-This is the DE production runbook. Do not use the older AoE2HDBets paths or service names for DE deploys.
+This is the DE production runbook. Do not use the older AoE2DEWarWagers paths or service names for DE deploys.
 
 ## Production Truth
 

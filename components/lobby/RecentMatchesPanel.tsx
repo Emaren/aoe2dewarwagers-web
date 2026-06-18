@@ -2,7 +2,7 @@
 
 import { formatLobbyMoment } from "@/components/lobby/utils";
 import Link from "next/link";
-import { type ReactNode } from "react";
+import { type ReactNode, type UIEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   getLobbyPresentationTone,
   type LobbyThemeKey,
@@ -17,21 +17,130 @@ import {
 import type { LobbyMatchRow } from "@/lib/lobby";
 import { pickLobbyMatchPlayedAt } from "@/lib/lobbyMatchTime";
 
+const MATCH_FEED_PAGE_SIZE = 24;
+
+type RecentMatchesResponse = {
+  ok?: boolean;
+  matches?: LobbyMatchRow[];
+  nextOffset?: number;
+  hasMore?: boolean;
+};
+
 type RecentMatchesPanelProps = {
   recentMatches: LobbyMatchRow[];
   themeKey: LobbyThemeKey;
   viewMode: LobbyViewMode;
+  surface?: "standard" | "extreme";
 };
+
+function mergeMatchLists(primary: LobbyMatchRow[], secondary: LobbyMatchRow[]) {
+  const seen = new Set<number>();
+  const merged: LobbyMatchRow[] = [];
+
+  for (const match of [...primary, ...secondary]) {
+    if (seen.has(match.id)) continue;
+    seen.add(match.id);
+    merged.push(match);
+  }
+
+  return merged;
+}
+
 
 export function RecentMatchesPanel({
   recentMatches,
   themeKey,
   viewMode,
+  surface = "standard",
 }: RecentMatchesPanelProps) {
   const tone = getLobbyPresentationTone(themeKey, viewMode);
+  const isExtreme = surface === "extreme";
+  const [matches, setMatches] = useState(recentMatches);
+  const [hasMoreMatches, setHasMoreMatches] = useState(
+    recentMatches.length >= MATCH_FEED_PAGE_SIZE
+  );
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const matchesRef = useRef(matches);
+  const loadingRef = useRef(false);
+  const hasMoreRef = useRef(hasMoreMatches);
+
+  useEffect(() => {
+    setMatches((current) => mergeMatchLists(recentMatches, current));
+    setHasMoreMatches(recentMatches.length >= MATCH_FEED_PAGE_SIZE);
+  }, [recentMatches]);
+
+  useEffect(() => {
+    matchesRef.current = matches;
+  }, [matches]);
+
+  useEffect(() => {
+    hasMoreRef.current = hasMoreMatches;
+  }, [hasMoreMatches]);
+
+  const loadMoreMatches = useCallback(async () => {
+    if (loadingRef.current || !hasMoreRef.current) return;
+
+    loadingRef.current = true;
+    setIsLoadingMore(true);
+
+    try {
+      const offset = matchesRef.current.length;
+      const response = await fetch(
+        `/api/lobby/recent-matches?offset=${offset}&limit=${MATCH_FEED_PAGE_SIZE}`,
+        { cache: "no-store" }
+      );
+
+      if (!response.ok) {
+        hasMoreRef.current = false;
+        setHasMoreMatches(false);
+        return;
+      }
+
+      const payload = (await response.json()) as RecentMatchesResponse;
+      const nextMatches = Array.isArray(payload.matches) ? payload.matches : [];
+
+      setMatches((current) => mergeMatchLists(current, nextMatches));
+
+      const nextHasMore =
+        typeof payload.hasMore === "boolean"
+          ? payload.hasMore
+          : nextMatches.length >= MATCH_FEED_PAGE_SIZE;
+
+      hasMoreRef.current = nextHasMore;
+      setHasMoreMatches(nextHasMore);
+    } catch (error) {
+      console.warn("Failed to load more lobby matches:", error);
+      hasMoreRef.current = false;
+      setHasMoreMatches(false);
+    } finally {
+      loadingRef.current = false;
+      setIsLoadingMore(false);
+    }
+  }, []);
+
+  const handleMatchFeedScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      const target = event.currentTarget;
+      const distanceFromBottom =
+        target.scrollHeight - target.scrollTop - target.clientHeight;
+
+      if (distanceFromBottom < 420) {
+        void loadMoreMatches();
+      }
+    },
+    [loadMoreMatches]
+  );
+
+  const visibleMatches = matches;
 
   return (
-    <div className={`rounded-[1.75rem] border p-6 ${tone.panelShell}`}>
+    <div
+      className={`flex h-[min(76dvh,46rem)] min-h-[28rem] flex-col overflow-hidden rounded-[1.75rem] border p-5 sm:h-[min(78dvh,48rem)] sm:min-h-[30rem] sm:p-6 lg:h-[min(78dvh,50rem)] lg:min-h-[32rem] ${
+        isExtreme
+          ? "border-amber-200/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.045),rgba(255,255,255,0.018))] shadow-[0_26px_88px_rgba(0,0,0,0.28)]"
+          : tone.panelShell
+      }`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className={`text-xs uppercase tracking-[0.35em] ${tone.eyebrow}`}>
@@ -42,29 +151,28 @@ export function RecentMatchesPanel({
           </h3>
         </div>
 
-        <Link
-          href="/game-stats"
-          className={`rounded-full border px-3 py-1 text-xs transition ${tone.secondaryButton}`}
-        >
-          View All Matches
-        </Link>
       </div>
 
-      <div className="mt-5 space-y-3">
-        {recentMatches.length === 0 ? (
-          <p className={`rounded-2xl border px-4 py-5 text-sm text-slate-300 ${tone.card}`}>
-            Parsed matches will show here as soon as the watcher uploads them.
-          </p>
-        ) : (
-          recentMatches.map((match) => (
-            <MatchCard
-              key={match.id}
-              match={match}
-              themeKey={themeKey}
-              viewMode={viewMode}
-            />
-          ))
-        )}
+      <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1" aria-busy={isLoadingMore} onScroll={handleMatchFeedScroll}>
+        <div className="space-y-3">
+          {visibleMatches.length === 0 ? (
+            <p className={`rounded-2xl border px-4 py-5 text-sm text-slate-300 ${tone.card}`}>
+              Parsed matches will show here as soon as the watcher uploads them.
+            </p>
+          ) : (
+            <>
+              {visibleMatches.map((match) => (
+                <MatchCard
+                  key={match.id}
+                  match={match}
+                  themeKey={themeKey}
+                  viewMode={viewMode}
+                />
+              ))}
+
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

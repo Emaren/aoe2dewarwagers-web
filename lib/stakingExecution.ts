@@ -1,12 +1,15 @@
 import type { PrismaClient } from "@/lib/generated/prisma";
-import { WOLO_COIN_DECIMALS } from "@/lib/woloChain";
+import { loadMainnetStakingPositions } from "@/lib/mainnetStakingPositions";
+import { isWoloMainnet, WOLO_COIN_DECIMALS } from "@/lib/woloChain";
 import { fetchWoloBalanceAmount } from "@/lib/woloRuntime";
 import { getWoloStakingRuntime } from "@/lib/woloStakingRuntime";
 
 const UWOLO_PER_WOLO = BigInt(10) ** BigInt(WOLO_COIN_DECIMALS);
 const DEFAULT_UNSTAKE_HEADROOM_UWOLO = BigInt(10_000_000);
 export const STAKING_WALLET_TOP_UP_DETAIL =
-  "Staking wallet needs operator top-up before this unstake can execute.";
+  "Staking wallet reserve top-up needed.";
+export const STAKING_WALLET_TOP_UP_HELP =
+  "This wallet backs app-side staking withdrawals. It needs enough WOLO to cover pending unstake capacity plus fee headroom.";
 
 type StakingExecutionLimits = {
   maxUnstakeWolo: number;
@@ -75,19 +78,25 @@ export async function loadStakingExecutionLimits(
   const currentStake = Math.max(0, Math.floor(currentStakedWolo || 0));
   let stakingWalletBalanceUWolo: bigint | null = null;
   let balanceLookupError: string | null = null;
-  const positionTotals = await prisma.stakingPosition.aggregate({
-    where: {
-      status: "active",
-      currentStakedWolo: { gt: 0 },
-    },
-    _count: { _all: true },
-    _sum: { currentStakedWolo: true },
-  });
-  const totalConfirmedStakedWolo = Math.max(
-    0,
-    positionTotals._sum.currentStakedWolo ?? 0
-  );
-  const activeStakers = positionTotals._count._all;
+  const mainnetPositions = isWoloMainnet()
+    ? await loadMainnetStakingPositions(prisma)
+    : null;
+  const legacyPositionTotals = mainnetPositions
+    ? null
+    : await prisma.stakingPosition.aggregate({
+        where: {
+          status: "active",
+          currentStakedWolo: { gt: 0 },
+        },
+        _count: { _all: true },
+        _sum: { currentStakedWolo: true },
+      });
+  const totalConfirmedStakedWolo = mainnetPositions
+    ? mainnetPositions.reduce((sum, position) => sum + position.currentStakedWolo, 0)
+    : Math.max(0, legacyPositionTotals?._sum.currentStakedWolo ?? 0);
+  const activeStakers = mainnetPositions
+    ? mainnetPositions.filter((position) => position.currentStakedWolo > 0).length
+    : legacyPositionTotals?._count._all ?? 0;
 
   if (runtime.stakingWalletAddress) {
     try {

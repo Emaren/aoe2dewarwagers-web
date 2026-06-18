@@ -4,6 +4,7 @@ import type { PrismaClient } from "@/lib/generated/prisma";
 import { loadUserCommunitySummaries } from "@/lib/communityHonors";
 import { loadInboxPayload } from "@/lib/contactInbox";
 import { requireAdmin } from "@/lib/adminSession";
+import { loadJourneySummaryMap } from "@/lib/adminJourneyIntelligence";
 import {
   loadAppearancePreferenceMap,
   loadRecentActivityMap,
@@ -21,7 +22,14 @@ import {
 } from "@/lib/scheduledMatchPreferences";
 import { loadWatcherDownloadAnalytics } from "@/lib/watcherDownloads";
 import { getWoloSettlementSurfaceStatus } from "@/lib/woloBetSettlement";
-import { buildWoloRestTxLookupUrl, getWoloBetEscrowRuntime } from "@/lib/woloChain";
+import {
+  buildWoloRestTxLookupUrl,
+  getWoloBetEscrowRuntime,
+  getWoloMainnetDisplayStartAt,
+  isMainnetVisibleBetWager,
+  isWoloMainnet,
+} from "@/lib/woloChain";
+import { loadBetWalletFrictionRail } from "@/lib/adminWalletFriction";
 
 function buildPairKey(leftUserId: number, rightUserId: number) {
   return [leftUserId, rightUserId].sort((a, b) => a - b).join(":");
@@ -120,6 +128,12 @@ function isAwaitingVerifiedWalletLinkDetail(value: string | null | undefined) {
   );
 }
 
+function isSettlementUnavailableDetail(value: string | null | undefined) {
+  return /settlement.*not configured|settlement_health|payout_fee_headroom_too_low|escrow_balance_too_low|payout execution.*not configured|service.*unconfigured|signer.*missing|signers unavailable|127\.0\.0\.1:8092|127\.0\.0\.1:8091|wolo-testnet/i.test(
+    value || ""
+  );
+}
+
 function displayUserName(entry: {
   uid?: string | null;
   inGameName?: string | null;
@@ -140,12 +154,37 @@ function projectReturnWolo(stakeWolo: number, selectedPoolWolo: number, opposite
 
 function isCountableWagerRow(wager: {
   executionMode: string;
+  stakeTxHash?: string | null;
+  stakeLockedAt?: Date | string | null;
+  createdAt?: Date | string | null;
   stakeIntent?: { status: string | null } | null;
 }) {
+  if (!isMainnetVisibleBetWager(wager)) {
+    return false;
+  }
+
   return (
     wager.executionMode !== "onchain_escrow" ||
     isBetStakeIntentCountableStatus(wager.stakeIntent?.status)
   );
+}
+
+function isVisibleMainnetClaim(claim: { createdAt: Date }) {
+  return !isWoloMainnet() || claim.createdAt.getTime() >= getWoloMainnetDisplayStartAt().getTime();
+}
+
+function visibleMainnetWagerWhere() {
+  if (!isWoloMainnet()) return {};
+  return {
+    executionMode: "onchain_escrow",
+    stakeTxHash: { not: null },
+    stakeLockedAt: { gte: getWoloMainnetDisplayStartAt() },
+    stakeIntent: {
+      is: {
+        status: "recorded",
+      },
+    },
+  };
 }
 
 function resolveExecutionMode(
@@ -231,6 +270,7 @@ export async function GET(request: NextRequest) {
       inbox,
       appearanceMap,
       activityMap,
+      journeySummaryMap,
       adminMemberships,
       activityStats,
       allClaims,
@@ -240,11 +280,13 @@ export async function GET(request: NextRequest) {
       marketRows,
       settlementSurface,
       watcherDownloads,
+      walletFriction,
     ] = await Promise.all([
       loadUserCommunitySummaries(prisma, userIds, { includePending: true }),
       loadInboxPayload(prisma, admin.uid, { summaryOnly: true }),
       loadAppearancePreferenceMap(prisma, userIds),
       loadRecentActivityMap(prisma, userIds, 20),
+      loadJourneySummaryMap(prisma, userIds, 40),
       prisma.directConversationParticipant.findMany({
         where: { userId: admin.id },
         include: {
@@ -340,6 +382,7 @@ export async function GET(request: NextRequest) {
       prisma.betWager.findMany({
         where: {
           userId: { in: userIds },
+          ...visibleMainnetWagerWhere(),
         },
         orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
         include: {
@@ -445,9 +488,10 @@ export async function GET(request: NextRequest) {
             },
           },
           },
-        }),
+      }),
       getWoloSettlementSurfaceStatus(),
       loadWatcherDownloadAnalytics(prisma),
+      loadBetWalletFrictionRail(prisma),
     ]);
 
     const unreadMap = new Map(
@@ -506,7 +550,9 @@ export async function GET(request: NextRequest) {
     const rescindedClaimsByUserId = new Map<number, SerializedClaim[]>();
     const claimsByName = new Map<string, SerializedClaim[]>();
 
-    for (const claim of allClaims) {
+    const visibleClaims = allClaims.filter(isVisibleMainnetClaim);
+
+    for (const claim of visibleClaims) {
       const serialized = {
         id: claim.id,
         displayPlayerName: claim.displayPlayerName,
@@ -868,6 +914,7 @@ export async function GET(request: NextRequest) {
           recentActions,
           recentActionsTotalCount: activitySummary.recentActionsTotalCount,
           lastActivityAt: activitySummary.lastActivityAt,
+          journeySummary: journeySummaryMap.get(entry.id) ?? null,
           pendingBadgeCount: community.badges.filter((badge) => badge.status === "pending").length,
           pendingGiftCount: community.gifts.filter((gift) => gift.status === "pending").length,
           pendingWoloClaims: pendingClaims.slice(0, 8),
@@ -887,7 +934,7 @@ export async function GET(request: NextRequest) {
 
     const settlementMarketIds = Array.from(
       new Set(
-        allClaims
+        visibleClaims
           .map((claim) => claim.sourceMarketId)
           .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
       )
@@ -911,7 +958,7 @@ export async function GET(request: NextRequest) {
       settlementMarkets.map((market) => [market.id, market] as const)
     );
 
-    const settlementRows = allClaims.slice(0, 60).map((claim) => {
+    const settlementRows = visibleClaims.slice(0, 60).map((claim) => {
       const market = typeof claim.sourceMarketId === "number"
         ? settlementMarketById.get(claim.sourceMarketId)
         : null;
@@ -955,18 +1002,18 @@ export async function GET(request: NextRequest) {
 
     const settlementRail = {
       summary: {
-        totalCount: allClaims.length,
-        totalAmountWolo: allClaims.reduce((sum, claim) => sum + claim.amountWolo, 0),
-        pendingCount: allClaims.filter((claim) => claim.status === "pending").length,
-        pendingAmountWolo: allClaims
+        totalCount: visibleClaims.length,
+        totalAmountWolo: visibleClaims.reduce((sum, claim) => sum + claim.amountWolo, 0),
+        pendingCount: visibleClaims.filter((claim) => claim.status === "pending").length,
+        pendingAmountWolo: visibleClaims
           .filter((claim) => claim.status === "pending")
           .reduce((sum, claim) => sum + claim.amountWolo, 0),
-        claimedCount: allClaims.filter((claim) => claim.status === "claimed").length,
-        claimedAmountWolo: allClaims
+        claimedCount: visibleClaims.filter((claim) => claim.status === "claimed").length,
+        claimedAmountWolo: visibleClaims
           .filter((claim) => claim.status === "claimed")
           .reduce((sum, claim) => sum + claim.amountWolo, 0),
-        rescindedCount: allClaims.filter((claim) => claim.status === "rescinded").length,
-        rescindedAmountWolo: allClaims
+        rescindedCount: visibleClaims.filter((claim) => claim.status === "rescinded").length,
+        rescindedAmountWolo: visibleClaims
           .filter((claim) => claim.status === "rescinded")
           .reduce((sum, claim) => sum + claim.amountWolo, 0),
         autoSettledCount: settlementRows.filter((row) => row.settlementMode === "auto_settled").length,
@@ -974,12 +1021,17 @@ export async function GET(request: NextRequest) {
           .filter((row) => row.settlementMode === "auto_settled")
           .reduce((sum, row) => sum + row.amountWolo, 0),
         failedCount: settlementRows.filter(
-          (row) => Boolean(row.errorState) && !isAwaitingVerifiedWalletLinkDetail(row.errorState)
+          (row) =>
+            Boolean(row.errorState) &&
+            !isAwaitingVerifiedWalletLinkDetail(row.errorState) &&
+            !isSettlementUnavailableDetail(row.errorState)
         ).length,
         failedAmountWolo: settlementRows
           .filter(
             (row) =>
-              Boolean(row.errorState) && !isAwaitingVerifiedWalletLinkDetail(row.errorState)
+              Boolean(row.errorState) &&
+              !isAwaitingVerifiedWalletLinkDetail(row.errorState) &&
+              !isSettlementUnavailableDetail(row.errorState)
           )
           .reduce((sum, row) => sum + row.amountWolo, 0),
       },
@@ -1164,6 +1216,12 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    const visibleMarketRailRows = marketRailRows.filter((market) => {
+      if (!isWoloMainnet()) return true;
+      if (["open", "closing", "live"].includes(market.status)) return true;
+      return market.leftBettors.length > 0 || market.rightBettors.length > 0 || market.unresolvedIntents.length > 0;
+    });
+
     const marketRail = {
       summary: {
         betEscrowMode: escrowRuntime.mode,
@@ -1172,37 +1230,45 @@ export async function GET(request: NextRequest) {
         escrowConfigError: escrowRuntime.configError,
         settlementServiceConfigured: settlementSurface.settlementServiceConfigured,
         settlementAuthConfigured: settlementSurface.settlementAuthConfigured,
+        settlementPayoutReady: settlementSurface.payoutReady,
+        settlementHealthFailureCode: settlementSurface.settlementHealthFailureCode,
         settlementExecutionMode: settlementSurface.payoutExecutionMode,
         groupedRunCapability: settlementSurface.groupedRunCapability,
         escrowVerifyCapability: settlementSurface.escrowVerifyCapability,
         escrowRecentCapability: settlementSurface.escrowRecentCapability,
         settlementSurfaceWarnings: settlementSurface.warnings,
         settlementSurfaceDetail: settlementSurface.detail,
-        openCount: marketRailRows.filter((market) =>
+        openCount: visibleMarketRailRows.filter((market) =>
           ["open", "closing", "live"].includes(market.status)
         ).length,
-        liveCount: marketRailRows.filter((market) => market.status === "live").length,
-        pendingSettlementCount: marketRailRows.filter((market) =>
+        liveCount: visibleMarketRailRows.filter((market) => market.status === "live").length,
+        pendingSettlementCount: visibleMarketRailRows.filter((market) =>
           market.settlementStatus === "pending" || market.settlementStatus === "dry_run"
         ).length,
-        failedSettlementCount: marketRailRows.filter((market) =>
+        failedSettlementCount: visibleMarketRailRows.filter((market) =>
           market.settlementStatus === "failed" || market.settlementStatus === "partial"
         ).length,
-        unresolvedIntentCount: marketRailRows.reduce(
+        unresolvedIntentCount: visibleMarketRailRows.reduce(
           (sum, market) => sum + market.unresolvedIntents.length,
           0
         ),
-        totalPotWolo: marketRailRows.reduce((sum, market) => sum + market.totalPotWolo, 0),
+        totalPotWolo: visibleMarketRailRows.reduce((sum, market) => sum + market.totalPotWolo, 0),
       },
-      rows: marketRailRows,
+      rows: visibleMarketRailRows,
     };
 
-    const communityLobbyBasicCount = userRows.filter(
-      (user) => getTileViewMode(user.appearance?.tileViewPreferences, "community_lobby") === "basic"
-    ).length;
-    const communityLobbyAdvancedCount = userRows.length - communityLobbyBasicCount;
+    const communityLobbyModes = userRows.map((user) =>
+      getTileViewMode(user.appearance?.tileViewPreferences, "community_lobby")
+    );
+    const communityLobbyBasicCount = communityLobbyModes.filter((mode) => mode === "basic").length;
+    const communityLobbyAdvancedCount = communityLobbyModes.filter((mode) => mode === "advanced").length;
+    const communityLobbyExtremeCount = communityLobbyModes.filter((mode) => mode === "extreme").length;
+    const communityLobbyBasicPercent =
+      userRows.length > 0 ? Math.round((communityLobbyBasicCount / userRows.length) * 100) : 0;
     const communityLobbyAdvancedPercent =
       userRows.length > 0 ? Math.round((communityLobbyAdvancedCount / userRows.length) * 100) : 0;
+    const communityLobbyExtremePercent =
+      userRows.length > 0 ? Math.max(0, 100 - communityLobbyBasicPercent - communityLobbyAdvancedPercent) : 0;
 
     const overview = {
       totalUsers: userRows.length,
@@ -1237,10 +1303,17 @@ export async function GET(request: NextRequest) {
           label: "Community Lobby",
           basicCount: communityLobbyBasicCount,
           advancedCount: communityLobbyAdvancedCount,
-          basicPercent: Math.max(0, 100 - communityLobbyAdvancedPercent),
+          extremeCount: communityLobbyExtremeCount,
+          basicPercent: communityLobbyBasicPercent,
           advancedPercent: communityLobbyAdvancedPercent,
+          extremePercent: communityLobbyExtremePercent,
           preferredMode:
-            communityLobbyAdvancedCount > communityLobbyBasicCount ? "advanced" : "basic",
+            communityLobbyExtremeCount >= communityLobbyAdvancedCount &&
+            communityLobbyExtremeCount >= communityLobbyBasicCount
+              ? "extreme"
+              : communityLobbyAdvancedCount > communityLobbyBasicCount
+                ? "advanced"
+                : "basic",
         },
       ],
       scheduledPreferenceUsage,
@@ -1251,6 +1324,7 @@ export async function GET(request: NextRequest) {
       overview,
       settlementRail,
       marketRail,
+      walletFriction,
       watcherDownloads,
     });
   } catch (err) {

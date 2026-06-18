@@ -43,6 +43,7 @@ ssh hel1
 cd /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn
 git status --short
 git pull --ff-only origin main
+npx prisma migrate deploy
 npm run build
 ```
 
@@ -56,6 +57,15 @@ journalctl -u aoe2dewarwagers-web.service -n 40 --no-pager
 
 ## Recent deployment notes
 
+### 2026-05-30 Advanced lobby arena and live ticker
+
+- Added `live_ticker_messages` for admin-managed text ticker messages.
+- `/lobby` defaults to Advanced view with a moving header ticker, Watch & Chat hero/comments rail, compact hero bet slip, compact WOLO swap tile, then the existing Community Lobby content.
+- Basic view remains available and should preserve the simpler lobby-first layout.
+- Deployment requires `npx prisma migrate deploy` before restarting `aoe2dewarwagers-web.service`.
+- Optional market display env: `WOLO_OSMOSIS_POOL_ID=3461`, `WOLO_OSMOSIS_POOL_URL=https://app.osmosis.zone/pool/3461`, `WOLO_OSMOSIS_LCD_URL=https://lcd.osmosis.zone`, `WOLO_MARKET_LABEL=WOLO Market`. Leave `WOLO_USD_PRICE` unset to derive the Advanced lobby market price from pool 3461; set it only as a manual override.
+- `wolo-1` is strict mainnet mode: `/bets` requires a Keplr-signed stake tx, and mainnet-facing WOLO/bet rails hide pre-mainnet testnet-era rows. Optional display cutoff: `WOLO_MAINNET_DISPLAY_START_AT=2026-05-25T00:00:00.000Z`.
+
 ### 2026-05-05 watcher telemetry and funnel truth
 
 - Added `watcher_client_events` for Electron watcher runtime telemetry.
@@ -68,18 +78,73 @@ journalctl -u aoe2dewarwagers-web.service -n 40 --no-pager
 
 When `/bets` is expected to open real Keplr stake locks, these envs must agree in the live web env:
 
-- `NEXT_PUBLIC_WOLO_RPC_URL`
-- `NEXT_PUBLIC_WOLO_REST_URL`
+- `NEXT_PUBLIC_WOLO_CHAIN_ID=wolo-1`
+- `NEXT_PUBLIC_WOLO_RPC_URL=https://rpc-mainnet.aoe2war.com`
+- `WOLO_RPC_URL=https://rpc-mainnet.aoe2war.com`
+- `NEXT_PUBLIC_WOLO_REST_URL=https://rest-mainnet.aoe2war.com`
+- `WOLO_REST_URL=https://rest-mainnet.aoe2war.com`
 - `NEXT_PUBLIC_WOLO_BET_ESCROW_ADDRESS`
 - `WOLO_BET_ESCROW_ADDRESS`
-- `WOLO_SETTLEMENT_URL`
+- `WOLO_SETTLEMENT_URL` must remain empty unless the mainnet settlement service is deliberately deployed on `127.0.0.1:8092`, `/settlement/v1/health` reports `ok=true` and `chain_id=wolo-1`, and the fresh payout/escrow signers are funded. It must not point at the old local testnet settlement target `127.0.0.1:8091`.
+- `WOLO_SETTLEMENT_AUTH_TOKEN` must come from the root-only WoloChain mainnet settlement env after the 8092 health gate is green.
+- `WOLO_BET_PAYOUT_ADDRESS=wolo1zfa9ssu2gpgqg7yzvhmjt4w66mza07qr2a4rwu`
+- `WOLO_BET_ESCROW_ADDRESS=wolo1zygwt232ymc4h2g52yvkntffhmd5alx2kglw7p`
+- `WOLO_COMMUNITY_TREASURY_ADDRESS=wolo1hlfvzuv4dc46ngvh3zlteuegx0xga20hj20zd2`
+- `WOLO_FAUCET_CLI=/usr/local/bin/wolochaind-mainnet`
+- `WOLO_FAUCET_HOME=/var/lib/aoe2dewarwagers-wolo-mainnet`
+- `WOLO_FAUCET_FROM` set to the wolo-1 app signer key name
+- `WOLO_FAUCET_CHAIN_ID=wolo-1`
+- `WOLO_FAUCET_NODE_RPC=http://127.0.0.1:27657`
 - `WOLO_STAKING_WALLET_ADDRESS` / `NEXT_PUBLIC_WOLO_STAKING_WALLET_ADDRESS`
 - `WOLO_STAKING_WALLET_MNEMONIC`
+- `WOLO_STAKING_HOME=/var/lib/aoe2dewarwagers-wolo-mainnet`
 - `WOLO_STAKING_UNSTAKE_FEE` (optional; defaults to `auto`)
 
-If `NEXT_PUBLIC_WOLO_BET_ESCROW_ADDRESS` or `WOLO_BET_ESCROW_ADDRESS` are missing, `/bets` silently falls back toward app-only behavior and no real stake window will open.
+If `NEXT_PUBLIC_WOLO_BET_ESCROW_ADDRESS` or `WOLO_BET_ESCROW_ADDRESS` are missing on `wolo-1`, `/bets` must block with an escrow config error. It should not record an app-only mainnet wager.
 
 For `/staking`, fund the staking wallet with total confirmed user stake plus the operator reserve/headroom used for WoloChain unstake sends. AoE2DEWarWagers defaults to a `10 WOLO` reserve unless `WOLO_STAKING_UNSTAKE_HEADROOM_UWOLO` is set. User max-unstake should not be reduced by this reserve; underfunding should show the operator top-up warning instead.
+
+Mainnet public staking display derives from tx-backed rows only: indexed
+WoloChain `MsgSend` rows to/from the staking wallet plus confirmed app
+`staking_events` with verified `wolo-1` tx hashes. Legacy `staking_positions`
+rows may exist for operator/history workflows, but must not drive public
+mainnet totals, operator funding requirements, or unstake limits. After deploy,
+run `scripts/backfill-wolo-mainnet-transfers.mjs` or the admin backfill route
+to refresh `/api/wolo/mainnet-transfers`. After the June 2026 transfer-index
+composition migration, run the backfill with explicit wide limits so older direct
+bank sends, including Jim/Sniper transfers, are indexed:
+
+```bash
+node scripts/backfill-wolo-mainnet-transfers.mjs --block-limit=5000000 --address-limit=400 --per-address-limit=5000 --global-limit=100000
+```
+
+The `/staking` public economy rail displays bank balances for the configured
+staking wallet, community treasury, bet escrow, payout signer, and DEX liquidity
+addresses. Empty custody wallets should show `0.00 WOLO`; do not replace that
+with modeled or app-ledger values.
+
+`/staking` Recent Activity should not hide mainnet-era settlement debt just
+because no payout tx exists yet. Verified `wolo-1` stake/transfer rows remain
+tx-backed, while pending `pending_wolo_claims` rows are grouped by market and
+labeled as settlement queue state. A Coco de Hae style app-only market can show
+as pending settlement debt; it must not be described as a chain tx until the
+claim row has a `payout_tx_hash`.
+
+On `wolo-1`, `/staking` public totals, personal stake, leaderboards, and reward
+weights are rebuilt from indexed WoloChain mainnet `MsgSend` rows to/from the
+staking wallet on or after `2026-05-25T00:00:00.000Z`. Do not use legacy
+app-only `staking_positions` as public mainnet truth. Refresh the transfer
+index with:
+
+```bash
+node scripts/backfill-wolo-mainnet-transfers.mjs --block-limit=100000 --global-limit=100
+```
+
+The read-only smoke endpoint is:
+
+```bash
+curl -s https://aoe2dewarwagers.com/api/wolo/mainnet-transfers?limit=10 | jq '{totalRows, latestTimestamp, rows: [.rows[] | {txHash, amountLabel, senderLabel, recipientLabel, timestamp}]}'
+```
 
 Unstake execution must sign from the staking wallet itself. Do not route unstake through the generic betting payout service: that service may preserve its own settlement headroom and will block or pay from the wrong custody rail. The live web env needs `WOLO_STAKING_WALLET_MNEMONIC` for `/api/staking/unstake` to broadcast the return transfer.
 
@@ -127,7 +192,11 @@ curl -I https://aoe2dewarwagers.com/challenge
 curl -I https://aoe2dewarwagers.com/players
 curl -I https://aoe2dewarwagers.com/contact-emaren
 curl -s https://aoe2dewarwagers.com/api/lobby | jq '.leaderboard.trackedPlayers, (.leaderboard.entries | length)'
-curl -s https://aoe2dewarwagers.com/api/bets | jq '.wolo | { onchainEscrowEnabled, betEscrowAddress }'
+curl -s https://aoe2dewarwagers.com/api/lobby | jq '{ticker: (.liveTicker.items | length), market: .woloMarket.poolId}'
+curl -s https://aoe2dewarwagers.com/api/bets | jq '.wolo | { betEscrowMode, onchainEscrowEnabled, onchainEscrowRequired, betEscrowAddress }'
+curl -s https://aoe2dewarwagers.com/api/staking/summary?period=24h | jq '.summary["24h"] | {betsPlaced, betVolumeWolo, activeStakers, totalStakedWolo, directTransferCount}'
+curl -s https://aoe2dewarwagers.com/api/staking/summary?period=all | jq '.summary.all.activity[] | select(.eventType=="SETTLEMENT") | {label, detail}'
+curl -s https://aoe2dewarwagers.com/api/wolo/mainnet-transfers?limit=5 | jq '{totalRows, latestTimestamp}'
 journalctl -u aoe2dewarwagers-web.service -n 20 --no-pager
 ```
 
@@ -135,7 +204,7 @@ For WOLO betting deploys, also do this manual smoke pass:
 
 ```bash
 # 1. Confirm the public payload still exposes live escrow truth.
-curl -s https://aoe2dewarwagers.com/api/bets | jq '.wolo | { onchainEscrowEnabled, betEscrowAddress }'
+curl -s https://aoe2dewarwagers.com/api/bets | jq '.wolo | { betEscrowMode, onchainEscrowEnabled, onchainEscrowRequired, betEscrowAddress }'
 
 # 2. Verify the service is healthy, then open /bets in a real browser session.
 journalctl -u aoe2dewarwagers-web.service -n 20 --no-pager
@@ -146,14 +215,17 @@ Expected result for the browser pass:
 - clicking `Lock 100` opens Keplr
 - after approval, the UI reaches `Escrow confirmed`
 - only then does `/api/bets/wager` record the slip
+- `/api/bets` reports `betEscrowMode: "required"` and `onchainEscrowRequired: true` on `wolo-1`
+- if a stake intent exists but no usable tx proof is attached yet, Your Book shows a pending proof row and the server keeps scanning recent WoloChain escrow deposits for 24 hours
+- challenge-linked markets should not appear beside a duplicate `watcher-live-*` market for the same session when the sides map safely
 
 If browser wallets report `Failed to fetch balance`, `network error`, or a dead Keplr handoff, check these before blaming app code:
 
 ```bash
-curl -sSI -H 'Origin: https://aoe2dewarwagers.com' https://rpc.aoe2hdbets.com/status | rg 'Access-Control-Allow-Origin|HTTP/'
-curl -sSI -H 'Origin: https://www.aoe2dewarwagers.com' https://rpc.aoe2hdbets.com/status | rg 'Access-Control-Allow-Origin|HTTP/'
-curl -sSI -H 'Origin: https://aoe2dewarwagers.com' https://rest.aoe2hdbets.com/cosmos/base/tendermint/v1beta1/blocks/latest | rg 'Access-Control-Allow-Origin|HTTP/'
-curl -sSI -H 'Origin: https://www.aoe2dewarwagers.com' https://rest.aoe2hdbets.com/cosmos/base/tendermint/v1beta1/blocks/latest | rg 'Access-Control-Allow-Origin|HTTP/'
+curl -sSI -H 'Origin: https://aoe2dewarwagers.com' https://rpc-mainnet.aoe2war.com/status | rg 'Access-Control-Allow-Origin|HTTP/'
+curl -sSI -H 'Origin: https://www.aoe2dewarwagers.com' https://rpc-mainnet.aoe2war.com/status | rg 'Access-Control-Allow-Origin|HTTP/'
+curl -sSI -H 'Origin: https://aoe2dewarwagers.com' https://rest-mainnet.aoe2war.com/cosmos/base/tendermint/v1beta1/blocks/latest | rg 'Access-Control-Allow-Origin|HTTP/'
+curl -sSI -H 'Origin: https://www.aoe2dewarwagers.com' https://rest-mainnet.aoe2war.com/cosmos/base/tendermint/v1beta1/blocks/latest | rg 'Access-Control-Allow-Origin|HTTP/'
 journalctl -u aoe2dewarwagers-web.service -n 20 --no-pager
 ```
 
@@ -175,13 +247,31 @@ Expected result:
 The most important public product smoke tests are now:
 
 1. `/lobby` loads cleanly
-2. leaderboard renders and count matches entry length
-3. `/bets` reports live escrow truth and can still open a real lock flow in-browser
-4. tournament panel loads cleanly
-5. `/live-games` responds
-6. same-origin `/api/lobby` returns a believable snapshot shape
+2. Advanced `/lobby` shows the moving live ticker, Watch & Chat hero with comments to the right, reactions and compact bet slip under the video, WOLO swap tile, and the existing Community Lobby below them
+3. Basic `/lobby` view still shows the simpler leaderboard/tournament/war-chest-first layout
+4. `/api/lobby` includes `liveTicker` and `woloMarket`
+5. `/admin` can create/enable/disable ticker messages without exposing controls to normal users
+6. leaderboard renders and count matches entry length
+7. `/bets` reports live escrow truth and can still open a real lock flow in-browser
+8. tournament panel loads cleanly
+9. `/live-games` responds
+10. same-origin `/api/lobby` returns a believable snapshot shape
+11. browser stream routes exist: `/api/streams/active` returns JSON, and `game_watch_streams` has the browser-stream columns after `npx prisma migrate deploy`
+12. `/profile?watcher_stream=1&stream_session=smoke&stream_title=Smoke%20Match` renders the streamer studio without losing the watcher handoff params through auth
+13. a cancelled or failed Keplr/Ledger stake attempt records a `bet_wallet_error` activity event when it fails before stake-intent creation
+14. `/api/admin/users/rails` includes `walletFriction`, and `/admin/wolochain` renders the wallet-friction rail
+15. signed-stake recovery still requires a real tx hash, while recent no-proof stake intents remain visible as pending proof rows
+16. recent settled `/bets` results show one row per linked session, preferring challenge-linked books over watcher shadows
 
 This matters more now than older homepage-only checks because the lobby/community shell is the real public spine.
+
+Browser stream runtime notes:
+
+- `storage/live-streams/` is runtime media storage and must stay writable by the web service user.
+- Optional production override: `AOE2_STREAM_STORAGE_DIR=/path/to/stream-storage`.
+- Optional chunk retention override: `AOE2_STREAM_CHUNK_RETENTION_MS=21600000`; active-stream polling also ends stale browser streams and prunes old ended chunks.
+- AoE2DE War Wagers streaming is browser/watcher WebM chunk distribution with a rolling playback route. It is intentionally not WOLO-gated and does not require Twitch or OBS.
+- Watcher `1.5.0` can stream natively with watcher-key auth or open `/profile?watcher_stream=1&stream_session=...&stream_title=...` as a browser fallback. Current DE beta packages are unsigned; macOS uses manual download-and-replace, and Windows may show SmartScreen prompts.
 
 ## Known deploy gotchas
 
@@ -292,7 +382,7 @@ Do not restart blindly before the schema is in place.
 - backend upstream should remain `http://127.0.0.1:4400`
 - browser should stay same-origin for `/api/*`
 - watcher uploads should continue to target `api-prodn.aoe2dewarwagers.com`, not the public web host
-- browser wallet reads and stake verification depend on `rpc.aoe2hdbets.com` and `rest.aoe2hdbets.com` staying CORS-clean for both `aoe2dewarwagers.com` and `www.aoe2dewarwagers.com`
+- browser wallet reads and stake verification depend on `rpc-mainnet.aoe2war.com` and `rest-mainnet.aoe2war.com` staying CORS-clean for both `aoe2dewarwagers.com` and `www.aoe2dewarwagers.com`
 - dedicated nginx request-log runbook for AoE2 Phase 1 lives at [deploy/aoe2-access-logging-phase1.md](/Users/tonyblum/projects/AoE2DEWarWagers/app-prodn/deploy/aoe2-access-logging-phase1.md)
 
 

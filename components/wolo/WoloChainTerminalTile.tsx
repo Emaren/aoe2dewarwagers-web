@@ -79,7 +79,7 @@ function consensusChipClasses(
     : "border border-white/10 bg-white/5 text-slate-200";
 }
 function prettySource(value: string | undefined) {
-  return (value || "https://rpc.aoe2hdbets.com").replace(/^https?:\/\//, "");
+  return (value || "https://rpc-mainnet.aoe2war.com").replace(/^https?:\/\//, "");
 }
 
 function shouldToggleFromTarget(target: EventTarget | null) {
@@ -118,16 +118,28 @@ function ansiClassFromCodes(codes: number[]) {
       bold = true;
     } else if (code === 22) {
       bold = false;
+    } else if (code === 31) {
+      fg = "text-rose-300";
     } else if (code === 32) {
       fg = "text-emerald-400";
+    } else if (code === 33) {
+      fg = "text-amber-200";
+    } else if (code === 35) {
+      fg = "text-fuchsia-300";
     } else if (code === 36) {
       fg = "text-cyan-300";
     } else if (code === 37) {
       fg = "text-slate-100";
     } else if (code === 90) {
       fg = "text-slate-400";
+    } else if (code === 91) {
+      fg = "text-rose-200";
     } else if (code === 92) {
       fg = "text-emerald-300";
+    } else if (code === 93) {
+      fg = "text-amber-100";
+    } else if (code === 95) {
+      fg = "text-fuchsia-200";
     } else if (code === 96) {
       fg = "text-cyan-200";
     } else if (code === 39) {
@@ -433,7 +445,7 @@ export default function WoloChainTerminalTile() {
             </div>
 
             <ConsolePanel
-              title={snapshot?.source || "rpc.aoe2hdbets.com"}
+              title={snapshot?.source || "rpc-mainnet.aoe2war.com"}
               badge={snapshot?.moniker || "WoloChain"}
               lines={runtimeLines}
             />
@@ -508,7 +520,7 @@ export default function WoloChainTerminalTile() {
           </div>
 
           <div className="mt-5">
-            <ConsolePanel
+            <DaemonConsolePanel
               title={daemon?.label || "daemon.log"}
               badge="local"
               lines={plainDaemonLines.length > 0 ? plainDaemonLines : daemonLines}
@@ -607,13 +619,13 @@ function DaemonConsolePanel({
             </div>
           </div>
 
-          <div className="rounded-full border border-slate-400/15 bg-slate-300/5 px-3 py-1 text-xs text-slate-200 whitespace-nowrap">
+          <div className="rounded-full border border-slate-300/15 bg-white/[0.035] px-3 py-1 text-xs text-slate-200 whitespace-nowrap">
             {badge}
           </div>
         </div>
       </div>
 
-      <div className="max-h-[26rem] overflow-auto bg-[#0b1118] px-5 py-4 font-mono text-[14px] leading-[1.55] sm:text-[15px]">
+      <div className="max-h-[26rem] overflow-auto bg-[#0b1118] px-5 py-4 font-mono text-[14px] leading-[1.55] text-slate-100 sm:text-[15px]">
         <div>
           {lines.map((line, index) => renderDaemonLine(line, index))}
         </div>

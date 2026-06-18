@@ -2,9 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { OfflineSigner } from "@cosmjs/proto-signing";
-import { Monitor, MonitorOff, Play } from "lucide-react";
+import { Monitor, PanelRight, PanelTop, Play } from "lucide-react";
 import { toast } from "sonner";
 
 import BetsViewToggle from "@/components/bets/BetsViewToggle";
@@ -13,6 +13,7 @@ import YourBookSection from "@/components/bets/YourBookSection";
 
 import FounderBonusChips from "@/components/bets/FounderBonusChips";
 import FounderBonusModal from "@/components/bets/FounderBonusModal";
+import LiveStreamFrame from "@/components/streaming/LiveStreamFrame";
 import WarTape from "@/components/bets/WarTape";
 import { isRecoveryBookOpen } from "@/components/bets/page-shared";
 import { useUserAuth } from "@/context/UserAuthContext";
@@ -41,16 +42,28 @@ type BroadcastViewKey = "left" | "god" | "right";
 type BroadcastFeed = {
   id: number;
   sessionKey: string;
-  provider: "twitch" | "youtube" | "steam" | "discord" | "custom";
+  provider: "aoe2war" | "twitch" | "youtube" | "steam" | "discord" | "custom";
+  sourceType: string;
   role: "caster" | "observer" | "player_pov" | "team_pov" | "postgame" | "external";
   label: string;
+  title: string | null;
   url: string;
+  playbackUrl: string | null;
   embedId: string | null;
   playerLabel: string | null;
+  thumbnailUrl: string | null;
+  mediaMimeType: string | null;
   isPrimary: boolean;
   status: string;
+  chunkCount: number;
+  latestChunkSeq: number;
+  lastHeartbeatAt: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
   canEmbed: boolean;
   externalOnly: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type BroadcastFeeds = {
@@ -685,17 +698,17 @@ function groupedSettlementLabel(
 ) {
   switch (capability) {
     case "supported":
-      return "grouped payouts ready";
+      return "batch payouts ready";
     case "fallback_to_singles":
-      return "single-payout fallback";
+      return "single payout mode";
     case "auth_required":
-      return "settlement auth missing";
+      return "operator auth needed";
     case "auth_failed":
-      return "settlement auth failed";
+      return "operator auth blocked";
     case "not_configured":
-      return "settlement service off";
+      return "settlement unavailable";
     default:
-      return "settlement support unconfirmed";
+      return "settlement checking";
   }
 }
 
@@ -721,6 +734,84 @@ function groupedSettlementTone(
     default:
       return "border-indigo-300/20 bg-indigo-400/10 text-indigo-100";
   }
+}
+
+function stakeRailLabel({
+  required,
+  enabled,
+  mode,
+}: {
+  required: boolean;
+  enabled: boolean;
+  mode: "disabled" | "optional" | "required";
+}) {
+  if (required && enabled) return "wallet stake required";
+  if (required) return "wallet stake pending";
+  if (mode === "optional" && enabled) return "wallet stake ready";
+  return "app slips live";
+}
+
+function settlementRailLabel(
+  mode: "settlement_service" | "local_signer_fallback" | "unconfigured"
+) {
+  if (mode === "settlement_service") return "settlement rail online";
+  if (mode === "local_signer_fallback") return "operator signer ready";
+  return "settlement unavailable";
+}
+
+function publicRailMessage(value: string | null | undefined) {
+  const normalized = (value || "").toLowerCase();
+  if (!normalized) return null;
+  if (
+    normalized.includes("payout_reserve_floor_hit") ||
+    normalized.includes("reserve floor") ||
+    normalized.includes("payout signer balance")
+  ) {
+    return {
+      title: "Settlement rail waiting for operator top-up.",
+      body: "Queued payouts remain recorded; settlement resumes after the operator top-up clears.",
+      tone: "amber" as const,
+    };
+  }
+  if (normalized.includes("auth")) {
+    return {
+      title: "Settlement rail waiting for operator auth.",
+      body: "Queued payouts remain visible and will settle after the operator check clears.",
+      tone: "amber" as const,
+    };
+  }
+  if (
+    normalized.includes("settlement_health") ||
+    normalized.includes("settlement service") ||
+    normalized.includes("signer") ||
+    normalized.includes("not configured")
+  ) {
+    return {
+      title: "Settlement status unavailable.",
+      body: "Queued payouts remain visible while the operator rail reports current health.",
+      tone: "slate" as const,
+    };
+  }
+  return {
+    title: "Settlement status unavailable.",
+    body: "Queued payouts remain visible while the settlement rail confirms current health.",
+    tone: "slate" as const,
+  };
+}
+
+function buildPublicRailNotice(detail: string | null, warnings: string[]) {
+  const messages = [detail, ...warnings].map((item) => item?.trim()).filter(Boolean) as string[];
+  if (!messages.length) return null;
+  return publicRailMessage(messages.join(" "));
+}
+
+function publicEscrowConfigMessage(value: string | null) {
+  if (!value) return null;
+  const normalized = value.toLowerCase();
+  if (normalized.includes("escrow") || normalized.includes("wallet") || normalized.includes("address")) {
+    return "Wallet stake rail is waiting for operator configuration.";
+  }
+  return "Wallet stake rail is temporarily unavailable.";
 }
 
 function sideSurface(selected: boolean, emphasis: "warm" | "cool") {
@@ -819,7 +910,7 @@ export default function BetsPage() {
   const [founderComposer, setFounderComposer] = useState<FounderComposerState | null>(null);
   const [savingFounderBonus, setSavingFounderBonus] = useState(false);
   const [founderBonusError, setFounderBonusError] = useState<string | null>(null);
-  const [broadcastVisible, setBroadcastVisible] = useState(true);
+  const [broadcastVisible, setBroadcastVisible] = useState(false);
   const [pendingStakeRecoveries, setPendingStakeRecoveries] = useState<PendingStakeRecovery[]>([]);
 
   const syncPendingStakeRecoveries = useCallback(() => {
@@ -882,6 +973,11 @@ export default function BetsPage() {
 
     window.localStorage.setItem(BETS_VIEW_STORAGE_KEY, betsView);
   }, [betsView]);
+
+
+  function handleBetsViewChange(next: BetsViewMode) {
+    setBetsView(next);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -957,6 +1053,11 @@ export default function BetsPage() {
   const groupedRunCapability = board?.wolo.groupedRunCapability || "not_configured";
   const settlementSurfaceWarnings = board?.wolo.settlementSurfaceWarnings || [];
   const settlementSurfaceDetail = board?.wolo.settlementSurfaceDetail ?? null;
+  const publicSettlementNotice = buildPublicRailNotice(
+    settlementSurfaceDetail,
+    settlementSurfaceWarnings
+  );
+  const publicEscrowConfig = publicEscrowConfigMessage(runtimeBetEscrowConfigError);
   const unresolvedStakeIntents = board?.recovery.unresolvedStakeIntents || [];
   const maxStakeWolo = useMemo(() => resolveStakeMax(rawWalletBalance), [rawWalletBalance]);
 
@@ -1122,6 +1223,60 @@ export default function BetsPage() {
     }).catch(() => null);
   }
 
+  async function recordBetWalletError(input: {
+    marketId: number;
+    side: BetSide;
+    amountWolo: number;
+    walletAddress?: string | null;
+    walletProvider?: string | null;
+    walletType?: string | null;
+    step: string;
+    rawError: string;
+  }) {
+    await fetch("/api/bets/wallet-errors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        marketId: input.marketId,
+        side: input.side,
+        amountWolo: input.amountWolo,
+        walletAddress: input.walletAddress,
+        walletProvider: input.walletProvider,
+        walletType: input.walletType,
+        browserInfo: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 500) : null,
+        routePath: "/bets",
+        step: input.step,
+        rawError: input.rawError,
+      }),
+    }).catch(() => null);
+  }
+
+
+  function isKeplrUnavailableError(rawError: string) {
+    const normalized = rawError.toLowerCase();
+    return (
+      normalized.includes("keplr extension not found") ||
+      normalized.includes("keplr is not available") ||
+      normalized.includes("keplr offline signer was not found")
+    );
+  }
+
+  function describeBetWalletError(rawError: string) {
+    if (isKeplrUnavailableError(rawError)) {
+      return "Keplr is not available in this browser. No bet was placed and no WOLO moved. Open AoE2DE War Wagers in the Chrome profile where Keplr is installed, enable Keplr for aoe2dewarwagers.com, then try again.";
+    }
+
+    if (/insufficient|not enough|balance/i.test(rawError)) {
+      return "Not enough mainnet WOLO is available in this wallet for that bet. No bet was placed and no WOLO moved.";
+    }
+
+    if (/reject|denied|declined|cancel/i.test(rawError)) {
+      return "Wallet approval was cancelled or rejected. No bet was placed and no WOLO moved.";
+    }
+
+    return rawError;
+  }
+
   const recoverStakeIntent = useCallback(
     async (intentId: number, options?: { automatic?: boolean }) => {
       const recovery = readPendingStakeRecoveries().find((entry) => entry.intentId === intentId) || null;
@@ -1272,6 +1427,12 @@ export default function BetsPage() {
 
     const keplrWindow = window as BetBrowserWindow;
 
+    if (!keplrWindow.keplr) {
+      throw new Error(
+        "Keplr is not available in this browser. No bet was placed and no WOLO moved. Open AoE2DE War Wagers in the Chrome profile where Keplr is installed, enable Keplr for aoe2dewarwagers.com, then try again."
+      );
+    }
+
     if (keplrWindow.keplr?.experimentalSuggestChain) {
       try {
         await keplrWindow.keplr.experimentalSuggestChain(woloChainConfig);
@@ -1392,10 +1553,14 @@ export default function BetsPage() {
     let intentId: number | null = null;
     let pendingRecovery: PendingStakeRecovery | null = null;
     let preparedWallet: PreparedStakeWallet | null = null;
+    let workflowStep: LockWorkflow["phase"] | "stake_intent" | "lock_wager" =
+      "awaiting_wallet";
 
     try {
       if (onchainBetEscrowEnabled && runtimeBetEscrowAddress) {
+        workflowStep = "awaiting_wallet";
         preparedWallet = await prepareStakeWallet(market);
+        workflowStep = "stake_intent";
         intentId = await createStakeIntent({
           marketId: market.id,
           side: selection.side,
@@ -1422,6 +1587,8 @@ export default function BetsPage() {
         savePendingStakeRecovery(pendingRecovery);
       }
 
+      workflowStep =
+        onchainBetEscrowEnabled && runtimeBetEscrowAddress ? "confirming_chain" : "lock_wager";
       const stakeExecution = await lockStakeOnChain(market, selection.stake, preparedWallet);
       if (pendingRecovery) {
         pendingRecovery = {
@@ -1440,6 +1607,7 @@ export default function BetsPage() {
         phase: "recording_wager",
         stakeTxHash: stakeExecution.stakeTxHash,
       });
+      workflowStep = "recording_wager";
 
       if (intentId && pendingRecovery?.stakeTxHash) {
         await recordStakeIntentBroadcast(intentId, pendingRecovery);
@@ -1478,21 +1646,34 @@ export default function BetsPage() {
       }
     } catch (error) {
       console.error("Failed to lock wager:", error);
+      const rawError = error instanceof Error ? error.message : "Could not lock the wager.";
+      const displayError = describeBetWalletError(rawError);
       if (intentId) {
         await recordStakeIntentFailure({
           intentId,
           walletAddress: pendingRecovery?.walletAddress || connectedWalletAddress || null,
           walletProvider: pendingRecovery?.walletProvider || "keplr",
           walletType: pendingRecovery?.walletType || null,
-          step: lockWorkflow?.phase || "lock_wager",
-          rawError: error instanceof Error ? error.message : "Could not lock the wager.",
+          step: workflowStep,
+          rawError,
           status: pendingRecovery?.stakeTxHash ? "suspect" : "failed",
         });
         if (!pendingRecovery?.stakeTxHash) {
           clearPendingStakeRecovery(intentId);
         }
+      } else if (onchainBetEscrowEnabled && runtimeBetEscrowAddress) {
+        await recordBetWalletError({
+          marketId: market.id,
+          side: selection.side,
+          amountWolo: selection.stake,
+          walletAddress: preparedWallet?.walletAddress || connectedWalletAddress || null,
+          walletProvider: preparedWallet?.walletProvider || "keplr",
+          walletType: preparedWallet?.walletType || null,
+          step: workflowStep,
+          rawError,
+        });
       }
-      toast.error(error instanceof Error ? error.message : "Could not lock the wager.");
+      toast.error(displayError);
     } finally {
       setWorkingKey(null);
       setLockWorkflow(null);
@@ -1576,7 +1757,7 @@ export default function BetsPage() {
   }, [latestResult, spotlightMarket]);
 
   useEffect(() => {
-    setBroadcastVisible(true);
+    setBroadcastVisible(false);
   }, [broadcastSurface.key]);
 
   return (
@@ -1592,6 +1773,8 @@ export default function BetsPage() {
         previews={broadcastSurface.previews}
         visible={broadcastVisible}
         onToggle={() => setBroadcastVisible((current) => !current)}
+        viewMode={betsView}
+        onViewModeChange={handleBetsViewChange}
       />
 
       {betsView === "basic" ? (
@@ -1610,8 +1793,6 @@ export default function BetsPage() {
                     {liveCount} live
                   </span>
                 </div>
-
-                <BetsViewToggle value={betsView} onChange={setBetsView} />
               </div>
 
               <div className="mt-5">
@@ -1648,11 +1829,11 @@ export default function BetsPage() {
                 </div>
               </div>
 
-              {runtimeBetEscrowConfigError ? (
+              {publicEscrowConfig ? (
                 <div
                   className={`mt-4 ${insetClass()} border-rose-300/15 bg-rose-500/[0.08] px-4 py-4 text-sm text-rose-100`}
                 >
-                  {runtimeBetEscrowConfigError}
+                  {publicEscrowConfig}
                 </div>
               ) : null}
             </div>
@@ -1671,28 +1852,34 @@ export default function BetsPage() {
               {loadingBoard ? (
                 <LoadingMarket />
               ) : spotlightMarket ? (
-                <MarketFeature
-                  market={spotlightMarket}
-                  eyebrowLabel={spotlightMarket.featured ? "Featured Market" : "Current Book"}
-                  detailMode="basic"
-                  selection={selection}
-                  workingKey={workingKey}
-                  lockWorkflow={lockWorkflow}
-                  nowMs={nowMs}
-                  isAuthenticated={isAuthenticated}
-                  isAdmin={isAdmin}
-                  loadingAuth={loading}
-                  maxStakeWolo={maxStakeWolo}
-                  onSelect={handleSelect}
-                  onStakeChange={(stake) =>
-                    setSelection((current) =>
-                      current && current.marketId === spotlightMarket.id ? { ...current, stake } : current
-                    )
-                  }
-                  onLock={() => handleLock(spotlightMarket)}
-                  onClear={() => handleClear(spotlightMarket.id)}
-                  onOpenFounderBonus={openFounderComposer}
-                />
+                <>
+                  <MarketFeature
+                    market={spotlightMarket}
+                    eyebrowLabel={spotlightMarket.featured ? "Featured Market" : "Current Book"}
+                    detailMode="basic"
+                    selection={selection}
+                    workingKey={workingKey}
+                    lockWorkflow={lockWorkflow}
+                    nowMs={nowMs}
+                    isAuthenticated={isAuthenticated}
+                    isAdmin={isAdmin}
+                    loadingAuth={loading}
+                    maxStakeWolo={maxStakeWolo}
+                    onSelect={handleSelect}
+                    onStakeChange={(stake) =>
+                      setSelection((current) =>
+                        current && current.marketId === spotlightMarket.id ? { ...current, stake } : current
+                      )
+                    }
+                    onLock={() => handleLock(spotlightMarket)}
+                    onClear={() => handleClear(spotlightMarket.id)}
+                    onOpenFounderBonus={openFounderComposer}
+                  />
+                  <WarTape
+                    rows={spotlightMarket.warTape.slice(0, 5)}
+                    emptyLabel="Slips and payout proof will stamp in here as the game moves."
+                  />
+                </>
               ) : recentResults.length ? (
                 <RecentResultFeature result={recentResults[0]} />
               ) : (
@@ -1787,13 +1974,11 @@ export default function BetsPage() {
                             : "border border-white/[0.08] bg-white/[0.04] text-slate-300"
                     }`}
                   >
-                    {onchainBetEscrowRequired && onchainBetEscrowEnabled
-                      ? "verified escrow required"
-                      : onchainBetEscrowRequired
-                        ? "escrow required"
-                        : runtimeBetEscrowMode === "optional" && onchainBetEscrowEnabled
-                          ? "escrow optional"
-                          : "app-side fallback"}
+                    {stakeRailLabel({
+                      required: onchainBetEscrowRequired,
+                      enabled: onchainBetEscrowEnabled,
+                      mode: runtimeBetEscrowMode,
+                    })}
                   </span>
                   <span
                     className={`rounded-full border px-2.5 py-0.5 text-[10px] uppercase tracking-[0.16em] ${groupedSettlementTone(groupedRunCapability)}`}
@@ -1801,15 +1986,9 @@ export default function BetsPage() {
                     {groupedSettlementLabel(groupedRunCapability)}
                   </span>
                   <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-0.5 text-[10px] uppercase tracking-[0.16em] text-slate-300">
-                    {settlementExecutionMode === "settlement_service"
-                      ? "chain rail active"
-                      : settlementExecutionMode === "local_signer_fallback"
-                        ? "local signer fallback"
-                        : "chain rail pending"}
+                    {settlementRailLabel(settlementExecutionMode)}
                   </span>
                 </div>
-
-                <BetsViewToggle value={betsView} onChange={setBetsView} />
               </div>
 
               <div className="mt-5">
@@ -1853,26 +2032,21 @@ export default function BetsPage() {
                 </div>
               ) : null}
 
-              {runtimeBetEscrowConfigError ? (
+              {publicEscrowConfig ? (
                 <div className={`mt-4 ${insetClass()} border-rose-300/15 bg-rose-500/[0.08] px-4 py-4 text-sm text-rose-100`}>
-                  {runtimeBetEscrowConfigError}
+                  {publicEscrowConfig}
                 </div>
               ) : null}
-              {settlementSurfaceDetail ? (
-                <div className={`mt-4 ${insetClass()} px-4 py-4 text-sm text-slate-300`}>
-                  {settlementSurfaceDetail}
-                </div>
-              ) : null}
-              {settlementSurfaceWarnings.length ? (
-                <div className="mt-4 space-y-2">
-                  {settlementSurfaceWarnings.map((warning, index) => (
-                    <div
-                      key={`${warning}-${index}`}
-                      className={`${insetClass()} border-amber-300/15 bg-amber-500/[0.08] px-4 py-4 text-sm text-amber-100`}
-                    >
-                      {warning}
-                    </div>
-                  ))}
+              {publicSettlementNotice ? (
+                <div
+                  className={`mt-4 ${insetClass()} px-4 py-4 text-sm ${
+                    publicSettlementNotice.tone === "amber"
+                      ? "border-amber-300/15 bg-amber-500/[0.08] text-amber-100"
+                      : "text-slate-300"
+                  }`}
+                >
+                  <div className="font-semibold text-white">{publicSettlementNotice.title}</div>
+                  <div className="mt-1 leading-6">{publicSettlementNotice.body}</div>
                 </div>
               ) : null}
             </div>
@@ -1913,8 +2087,10 @@ export default function BetsPage() {
                   onClear={() => handleClear(spotlightMarket.id)}
                   onOpenFounderBonus={openFounderComposer}
                 />
+              ) : recentResults.length ? (
+                <RecentResultFeature result={recentResults[0]} />
               ) : (
-                <EmptyShell label="No books armed yet." />
+                <EmptyShell label="No books armed yet. The latest closed book will linger here once proof lands." />
               )}
             </section>
           </section>
@@ -2279,28 +2455,29 @@ function BroadcastVisibilityButton({
   visible: boolean;
   onToggle: () => void;
 }) {
-  const Icon = visible ? Monitor : MonitorOff;
+  const Icon = visible ? PanelRight : PanelTop;
 
   return (
     <button
       type="button"
       aria-pressed={visible}
-      aria-label={visible ? "Hide Broadcast" : "Show Broadcast"}
-      title={visible ? "Hide Broadcast" : "Show Broadcast"}
+      aria-label={visible ? "Use side-rail Battle Cam layout" : "Use stacked Battle Cam layout"}
+      title={visible ? "Side-rail Battle Cam" : "Stacked Battle Cam"}
       onClick={onToggle}
-      className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
+      className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition ${
         visible
-          ? "bg-amber-300/12 text-amber-100 shadow-[0_0_24px_rgba(251,191,36,0.08)] hover:bg-amber-300/18"
-          : "bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]"
+          ? "border-amber-200/18 bg-amber-300/12 text-amber-100 shadow-[0_0_24px_rgba(251,191,36,0.08)] hover:bg-amber-300/18"
+          : "border-white/[0.08] bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]"
       }`}
     >
-      <Icon className="h-5 w-5" aria-hidden="true" />
+      <Icon className="h-4 w-4" aria-hidden="true" />
     </button>
   );
 }
 
 function providerLabel(feed: BroadcastFeed | null | undefined) {
   if (!feed) return "Placeholder";
+  if (feed.provider === "aoe2war") return "AoE2DE War Wagers";
   if (feed.provider === "twitch") return "Twitch";
   if (feed.provider === "youtube") return "YouTube";
   if (feed.provider === "steam") return "Steam";
@@ -2332,10 +2509,39 @@ function buildBroadcastEmbedSrc(
   if (feed.provider === "youtube") {
     return `https://www.youtube.com/embed/${encodeURIComponent(
       feed.embedId
-    )}?rel=0&modestbranding=1&autoplay=${autoplay ? "1" : "0"}`;
+    )}?rel=0&modestbranding=1&playsinline=1&mute=${autoplay ? "1" : "0"}&autoplay=${
+      autoplay ? "1" : "0"
+    }`;
   }
 
   return null;
+}
+
+
+function broadcastViewHasSource(view: {
+  feed: BroadcastFeed | null;
+  previewUrl: string | null;
+}) {
+  return Boolean(
+    view.previewUrl ||
+      view.feed?.playbackUrl ||
+      view.feed?.embedId ||
+      view.feed?.url
+  );
+}
+
+function broadcastViewHasNativePlayback(view: {
+  feed: BroadcastFeed | null;
+  previewUrl: string | null;
+}) {
+  const feed = view.feed;
+  return Boolean(
+    feed &&
+      (feed.provider === "aoe2war" ||
+        feed.sourceType === "browser" ||
+        feed.sourceType === "watcher_native") &&
+      feed.playbackUrl
+  );
 }
 
 function BroadcastHeroTile({
@@ -2348,6 +2554,8 @@ function BroadcastHeroTile({
   previews,
   visible,
   onToggle,
+  viewMode,
+  onViewModeChange,
 }: {
   leftName: string;
   rightName: string;
@@ -2358,6 +2566,8 @@ function BroadcastHeroTile({
   previews: BroadcastPreviewUrls;
   visible: boolean;
   onToggle: () => void;
+  viewMode: BetsViewMode;
+  onViewModeChange: (next: BetsViewMode) => void;
 }) {
   const [selectedView, setSelectedView] = useState<BroadcastViewKey>("god");
   const [playingView, setPlayingView] = useState<BroadcastViewKey | null>(null);
@@ -2379,7 +2589,7 @@ function BroadcastHeroTile({
         },
         {
           key: "god" as const,
-          label: "God View",
+          label: "Battle Cam",
           eyebrow: "Observer",
           tone: "gold" as const,
           feed: feeds.god,
@@ -2396,16 +2606,25 @@ function BroadcastHeroTile({
       ],
     [feeds, leftName, leftPreviewUrl, previews.god, rightName, rightPreviewUrl]
   );
-  const activeView = views.find((view) => view.key === selectedView) || views[1];
+  const defaultView = useMemo(
+    () =>
+      views.find(broadcastViewHasNativePlayback) ||
+      (broadcastViewHasSource(views[1]) ? views[1] : null) ||
+      views.find(broadcastViewHasSource) ||
+      views[1],
+    [views]
+  );
+  const activeView = views.find((view) => view.key === selectedView) || defaultView;
+  const activeViewHasEmbeddableFeed = Boolean(activeView.feed?.canEmbed && activeView.feed.embedId);
 
   useEffect(() => {
     setBrowserHost(window.location.hostname || "aoe2dewarwagers.com");
   }, []);
 
   useEffect(() => {
-    setSelectedView("god");
+    setSelectedView(defaultView.key);
     setPlayingView(null);
-  }, [marketTitle, leftName, rightName]);
+  }, [defaultView.key, marketTitle, leftName, rightName]);
 
   return (
     <section
@@ -2429,10 +2648,11 @@ function BroadcastHeroTile({
           </div>
         </div>
 
-        <div className="flex min-w-0 items-start gap-2">
-          <span className="max-w-[14rem] truncate rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-slate-300 sm:max-w-[22rem]">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <span className="hidden max-w-[14rem] truncate rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-slate-300 sm:block sm:max-w-[22rem]">
             {marketTitle}
           </span>
+          <BetsViewToggle value={viewMode} onChange={onViewModeChange} />
           <BroadcastVisibilityButton visible={visible} onToggle={onToggle} />
         </div>
       </div>
@@ -2465,13 +2685,42 @@ function BroadcastHeroTile({
             previewUrl={activeView.previewUrl}
             browserHost={browserHost}
             marketTitle={marketTitle}
-            isPlaying={playingView === activeView.key}
+            isPlaying={activeViewHasEmbeddableFeed || playingView === activeView.key}
             onPlay={() => setPlayingView(activeView.key)}
+            layoutToggle={null}
           />
         </>
       ) : (
-        <div className={`${insetClass()} mt-4 px-4 py-5 text-sm text-slate-300`}>
-          Broadcast hidden.
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_14rem] lg:items-stretch">
+          <BroadcastCompactFrame
+            label={activeView.label}
+            eyebrow={activeView.eyebrow}
+            tone={activeView.tone}
+            feed={activeView.feed}
+            previewUrl={activeView.previewUrl}
+            browserHost={browserHost}
+            marketTitle={marketTitle}
+            isPlaying={activeViewHasEmbeddableFeed || playingView === activeView.key}
+            onPlay={() => setPlayingView(activeView.key)}
+            layoutToggle={null}
+          />
+          <div className="grid grid-cols-3 gap-2 lg:grid-cols-1">
+            {views.map((view) => (
+              <BroadcastPreviewButton
+                key={view.key}
+                label={view.label}
+                eyebrow={view.eyebrow}
+                tone={view.tone}
+                feed={view.feed}
+                previewUrl={view.previewUrl}
+                selected={selectedView === view.key}
+                onSelect={() => {
+                  setSelectedView(view.key);
+                  setPlayingView(null);
+                }}
+              />
+            ))}
+          </div>
         </div>
       )}
     </section>
@@ -2524,7 +2773,7 @@ function BroadcastPreviewButton({
   );
 }
 
-function BroadcastPlaceholderFrame({
+function BroadcastCompactFrame({
   label,
   eyebrow,
   tone,
@@ -2534,6 +2783,7 @@ function BroadcastPlaceholderFrame({
   marketTitle,
   isPlaying,
   onPlay,
+  layoutToggle,
 }: {
   label: string;
   eyebrow: string;
@@ -2544,6 +2794,60 @@ function BroadcastPlaceholderFrame({
   marketTitle: string;
   isPlaying: boolean;
   onPlay: () => void;
+  layoutToggle?: ReactNode;
+}) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-[1.35rem] border border-white/[0.08] bg-slate-950/70 p-2">
+      <div className="aspect-video max-h-[18rem] min-h-[9rem] overflow-hidden rounded-[1.1rem] border border-white/[0.06] bg-black/55 sm:min-h-[11rem]">
+        <BroadcastSignalSurface
+          tone={tone}
+          feed={feed}
+          previewUrl={previewUrl}
+          browserHost={browserHost}
+          isPlaying={isPlaying}
+          onPlay={onPlay}
+        />
+      </div>
+      <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2 px-1">
+        <div className="min-w-0">
+          <div className="truncate text-[10px] uppercase tracking-[0.22em] text-slate-500">
+            {feed ? providerLabel(feed) : eyebrow}
+          </div>
+          <div className="mt-1 truncate text-sm font-semibold text-white sm:text-base">{label}</div>
+        </div>
+        <div className="flex max-w-full min-w-0 items-center gap-2">
+          {layoutToggle}
+          <div className="max-w-full truncate rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-[11px] text-slate-300">
+            {feed ? `${providerLabel(feed)} feed` : `Preview · ${marketTitle}`}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BroadcastPlaceholderFrame({
+  label,
+  eyebrow,
+  tone,
+  feed,
+  previewUrl,
+  browserHost,
+  marketTitle,
+  isPlaying,
+  onPlay,
+  layoutToggle,
+}: {
+  label: string;
+  eyebrow: string;
+  tone: "warm" | "gold" | "cool";
+  feed: BroadcastFeed | null;
+  previewUrl: string | null;
+  browserHost: string;
+  marketTitle: string;
+  isPlaying: boolean;
+  onPlay: () => void;
+  layoutToggle?: ReactNode;
 }) {
   return (
     <div className="mt-4 overflow-hidden rounded-[1.45rem] border border-white/[0.08] bg-slate-950/78 p-2.5 sm:p-3">
@@ -2564,22 +2868,25 @@ function BroadcastPlaceholderFrame({
           </div>
           <div className="mt-1 truncate text-lg font-semibold text-white sm:text-xl">{label}</div>
         </div>
-        {feed ? (
-          <a
-            href={feed.url}
-            target="_blank"
-            rel="noreferrer"
-            className="min-w-0 max-w-full overflow-hidden flex items-center gap-2 rounded-full border border-emerald-200/12 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-100 transition hover:bg-emerald-400/16 sm:max-w-[24rem]"
-          >
-            <Play className="h-3.5 w-3.5 text-emerald-100" aria-hidden="true" />
-            <span className="truncate">{providerLabel(feed)} feed · {feed.label}</span>
-          </a>
-        ) : (
-          <div className="min-w-0 max-w-full overflow-hidden flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300 sm:max-w-[24rem]">
-            <Play className="h-3.5 w-3.5 text-amber-100" aria-hidden="true" />
-            <span className="truncate">Placeholder feed · {marketTitle}</span>
-          </div>
-        )}
+        <div className="flex max-w-full min-w-0 items-center gap-2">
+          {layoutToggle}
+          {feed ? (
+            <a
+              href={feed.url}
+              target="_blank"
+              rel="noreferrer"
+              className="min-w-0 max-w-full overflow-hidden flex items-center gap-2 rounded-full border border-emerald-200/12 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-100 transition hover:bg-emerald-400/16 sm:max-w-[24rem]"
+            >
+              <Play className="h-3.5 w-3.5 text-emerald-100" aria-hidden="true" />
+              <span className="truncate">{providerLabel(feed)} feed · {feed.label}</span>
+            </a>
+          ) : (
+            <div className="min-w-0 max-w-full overflow-hidden flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300 sm:max-w-[24rem]">
+              <Play className="h-3.5 w-3.5 text-amber-100" aria-hidden="true" />
+              <span className="truncate">Placeholder feed · {marketTitle}</span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -2625,6 +2932,42 @@ function BroadcastSignalSurface({
     setLoopFailed(false);
   }, [previewUrl, isPlaying]);
 
+  if (
+    feed?.provider === "aoe2war" ||
+    feed?.sourceType === "browser" ||
+    feed?.sourceType === "watcher_native"
+  ) {
+    const nativePlaybackUrl = feed.id
+      ? `/api/streams/${feed.id}/rolling-webm`
+      : feed.playbackUrl;
+
+    return (
+      <div className="absolute inset-0 flex h-full min-h-0 items-center justify-center overflow-hidden rounded-none border-0 bg-black shadow-none">
+        {nativePlaybackUrl ? (
+          <video
+            key={`${feed.id || feed.playbackUrl || "native"}-${feed.latestChunkSeq ?? "live"}`}
+            className="h-full w-full object-contain"
+            src={nativePlaybackUrl}
+            poster={previewUrl || feed.thumbnailUrl || undefined}
+            muted
+            autoPlay
+            controls={!compact}
+            playsInline
+            preload="auto"
+          />
+        ) : (
+          <LiveStreamFrame
+            stream={feed}
+            title={feed.title || feed.label}
+            compact={compact}
+            fallbackLabel="Live"
+            className="absolute inset-0 h-full min-h-0 rounded-none border-0 shadow-none"
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="relative isolate flex h-full min-h-full items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_34%_28%,rgba(56,189,248,0.18),transparent_32%),radial-gradient(circle_at_72%_42%,rgba(251,191,36,0.13),transparent_30%),linear-gradient(135deg,#020617,#050816_48%,#0f172a)]">
       {hasLoop ? (
@@ -2661,7 +3004,7 @@ function BroadcastSignalSurface({
           className={`absolute inset-0 z-20 h-full w-full border-0 ${
             compact ? "pointer-events-none" : ""
           }`}
-          allow="autoplay; fullscreen; picture-in-picture"
+          allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
           allowFullScreen
         />
       ) : null}
@@ -2677,7 +3020,11 @@ function BroadcastSignalSurface({
         </>
       ) : null}
 
-      <div className="pointer-events-none absolute left-3 top-3 z-30 flex items-center gap-2 sm:left-4 sm:top-4">
+      <div
+        className={`pointer-events-none absolute left-3 top-3 z-30 items-center gap-2 sm:left-4 sm:top-4 ${
+          embedSrc ? "hidden" : "flex"
+        }`}
+      >
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-30" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-red-400" />
@@ -2875,7 +3222,7 @@ function MarketFeature({
       : 0;
   const statusCopy = marketWorkflow
     ? marketWorkflow.phase === "awaiting_wallet"
-      ? "Open Keplr to approve the WOLO stake."
+      ? "Open Keplr — no WOLO moves until you approve the stake."
     : marketWorkflow.phase === "confirming_chain"
         ? "Stake submitted. Waiting for chain confirmation."
         : `Escrow confirmed${marketWorkflow.stakeTxHash ? ` · ${shortTxHash(marketWorkflow.stakeTxHash)}` : ""}. Recording slip...`

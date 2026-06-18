@@ -5,6 +5,7 @@ import { getBackendUpstreamBase } from "@/lib/backendUpstream";
 import { getFeaturedTournament, getLobbyMessages } from "@/lib/communityStore";
 import { loadLobbyLeaderboard } from "@/lib/lobbyLeaderboard";
 import { loadLobbyWoloEarnersBoard } from "@/lib/lobbyWoloEarners";
+import { getFallbackLiveTickerSnapshot, loadLiveTickerSnapshot } from "@/lib/liveTicker";
 import {
   LOBBY_ROOM_SLUG,
   getFallbackLeaderboard,
@@ -17,6 +18,9 @@ import {
 import { getLobbyMatchPlayedAtMs } from "@/lib/lobbyMatchTime";
 import { reconcileTournamentMatchProofs } from "@/lib/tournamentProofReconciler";
 import { loadWoloDevSnapshot } from "@/lib/woloDevSnapshot";
+import { loadWoloMarketSnapshot } from "@/lib/woloMarket";
+
+const LOBBY_RECENT_MATCH_INITIAL_LIMIT = 24;
 
 async function loadRecentMatches(): Promise<LobbyMatchRow[]> {
   try {
@@ -30,7 +34,7 @@ async function loadRecentMatches(): Promise<LobbyMatchRow[]> {
     return payload
       .slice()
       .sort((a, b) => getLobbyMatchPlayedAtMs(b) - getLobbyMatchPlayedAtMs(a))
-      .slice(0, 6);
+      .slice(0, LOBBY_RECENT_MATCH_INITIAL_LIMIT);
   } catch (error) {
     console.warn("Failed to load recent matches for lobby:", error);
     return [];
@@ -77,6 +81,7 @@ export async function loadLobbySnapshot(
   guestReactionSessionId?: string | null
 ): Promise<LobbySnapshot> {
   const wolo = await loadWoloDevSnapshot();
+  const woloMarket = await loadWoloMarketSnapshot();
 
   try {
     await reconcileTournamentMatchProofs(prisma);
@@ -98,6 +103,12 @@ export async function loadLobbySnapshot(
       loadLobbyWoloEarnersBoard(prisma, { mode: "weekly" }),
       loadAoe2HdPulseSnapshot(),
     ]);
+    const liveTicker = await loadLiveTickerSnapshot(prisma, {
+      tournament,
+      leaderboard,
+      recentMatches,
+      woloMarket,
+    });
 
     const messages =
       tournamentMessages.length > 0 || tournament.roomSlug === LOBBY_ROOM_SLUG
@@ -116,6 +127,8 @@ export async function loadLobbySnapshot(
       wolo,
       woloEarners,
       aoe2dePulse,
+      liveTicker,
+      woloMarket,
     };
   } catch (error) {
     console.warn("Falling back to lobby snapshot defaults:", error);
@@ -129,6 +142,8 @@ export async function loadLobbySnapshot(
       wolo,
       woloEarners: getFallbackWoloEarnersBoard(),
       aoe2dePulse: getEmptyAoe2HdPulseSnapshot(),
+      liveTicker: getFallbackLiveTickerSnapshot(),
+      woloMarket,
     };
   }
 }

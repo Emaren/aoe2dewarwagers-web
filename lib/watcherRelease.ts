@@ -23,18 +23,24 @@ export type WatcherDownloadArtifact = {
 };
 
 export const WATCHER_RELEASE = {
-  version: "1.1.2",
-  label: "AoE2DEWarWagers Watcher 1.1.2",
-  releasedOn: "Apr 22, 2026",
-  signingStatus: "Unsigned builds for now",
+  version: "1.5.0",
+  label: "AoE2DEWarWagers Watcher 1.5.0",
+  releasedOn: "Jun 18, 2026",
+  signingStatus: "Unsigned beta builds",
   featureChips: [
-    "AoE2DEWarWagers Watcher 1.1.2",
-    "Apr 22, 2026",
+    "AoE2DEWarWagers Watcher 1.5.0",
+    "Jun 18, 2026",
     "Windows installer",
     "Windows portable fallback",
     "macOS DMG + ZIP",
     "Linux AppImage",
-    "Historical replay import"
+    "Historical replay import",
+    "Watcher-native streaming",
+    "Full-screen capture mode",
+    "1s live chunks",
+    "Upload backpressure",
+    "Rolling playback",
+    "Faster final detection"
   ],
 } as const;
 
@@ -45,13 +51,13 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
     title: "Windows Installer",
     shortLabel: "NSIS installer",
     badge: "Recommended",
-    filename: "AoE2DEWarWagers Watcher Setup 1.1.2.exe",
+    filename: "AoE2DEWarWagers Watcher Setup 1.5.0.exe",
     format: "NSIS",
     description:
       "Smoothest Windows path. Installs cleanly, creates shortcuts, and keeps the first run obvious.",
-    downloadPath: "/downloads/AoE2DEWarWagers%20Watcher%20Setup%201.1.2.exe",
+    downloadPath: "/downloads/AoE2DEWarWagers%20Watcher%20Setup%201.5.0.exe",
     trackedHref: "/download/watcher/windows-installer",
-    primary: false,
+    primary: true,
     featuredOnDownloadPage: true,
   },
   {
@@ -60,11 +66,11 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
     title: "Windows Portable",
     shortLabel: "Backup EXE",
     badge: "Fallback",
-    filename: "AoE2DEWarWagers Watcher 1.1.2.exe",
+    filename: "AoE2DEWarWagers Watcher 1.5.0.exe",
     format: "portable",
     description:
-      "Same watcher core in a no-installer package if SmartScreen or installer policy gets in the way.",
-    downloadPath: "/downloads/AoE2DEWarWagers%20Watcher%201.1.2.exe",
+      "Same Windows watcher core in a no-installer package if installer policy gets in the way.",
+    downloadPath: "/downloads/AoE2DEWarWagers%20Watcher%201.5.0.exe",
     trackedHref: "/download/watcher/windows-portable",
     primary: false,
     featuredOnDownloadPage: true,
@@ -75,13 +81,13 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
     title: "macOS DMG",
     shortLabel: "Apple Silicon",
     badge: "Mac first",
-    filename: "AoE2DEWarWagers Watcher-1.1.2-arm64.dmg",
+    filename: "AoE2DEWarWagers Watcher-1.5.0-arm64.dmg",
     format: "DMG",
     description:
       "Best Mac install path. Drag in, pair once, and keep it open while AoE2DE runs under macOS or CrossOver.",
-    downloadPath: "/downloads/AoE2DEWarWagers%20Watcher-1.1.2-arm64.dmg",
+    downloadPath: "/downloads/AoE2DEWarWagers%20Watcher-1.5.0-arm64.dmg",
     trackedHref: "/download/watcher/mac-dmg",
-    primary: true,
+    primary: false,
     featuredOnDownloadPage: true,
   },
   {
@@ -105,11 +111,11 @@ export const WATCHER_DOWNLOAD_ARTIFACTS: readonly WatcherDownloadArtifact[] = [
     title: "Linux AppImage",
     shortLabel: "Linux build",
     badge: "Linux",
-    filename: "AoE2DEWarWagers Watcher-1.1.2.AppImage",
+    filename: "AoE2DEWarWagers Watcher-1.5.0.AppImage",
     format: "AppImage",
     description:
       "Portable Linux watcher for Proton or Wine-heavy setups where manual replay-folder selection matters most.",
-    downloadPath: "/downloads/AoE2DEWarWagers%20Watcher-1.1.2.AppImage",
+    downloadPath: "/downloads/AoE2DEWarWagers%20Watcher-1.5.0.AppImage",
     trackedHref: "/download/watcher/linux-appimage",
     primary: false,
     featuredOnDownloadPage: true,

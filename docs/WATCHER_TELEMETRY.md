@@ -10,21 +10,78 @@ Watcher analytics now separates noisy package pulls from confirmed watcher behav
 
 `game_stats` remains the historical fallback for confirmed watcher usage. Rows with `parse_source in ('watcher_live', 'watcher_final')` prove that a watcher-submitted game reached the app, even if no `app_open` telemetry existed yet.
 
+Watcher v1.5.0 uses watcher-native streaming plus rolling AoE2DE War Wagers playback and a faster final-candidate contract. Stream telemetry now includes source kind, capture mode, bitrate, one-second chunk cadence, chunk size, upload queue length, upload latency, dropped slices, heartbeat retries, display-capture guidance, and early-stop errors so support can tell whether a user is streaming a window, a full display, a slow network, or a failing capture source. A final upload is settlement-safe only when the upload response includes `should_settle = true` or a trusted finality status. Header-only or unparsed proof can be preserved for diagnostics, but it must not be read as final winner, score, postgame resource, or betting truth.
+
 ## Event Types
 
 Allowed `watcher_client_events.event_type` values:
 
 - `app_open`
+- `watcher_started`
+- `watcher_stopped`
+- `watcher_version_seen`
+- `watcher_update_check_started`
+- `watcher_update_available`
+- `watcher_update_not_available`
+- `watcher_update_downloaded`
+- `watcher_update_error`
+- `watcher_update_install_requested`
 - `auth_started`
 - `auth_success`
 - `auth_failed`
 - `watch_folder_selected`
+- `watching_started`
+- `watching_stopped`
+- `watcher_ready`
+- `watcher_error`
+- `monitor_start`
+- `monitor_stop`
+- `monitor_skip_final`
 - `replay_detected`
+- `replay_detected_ignored`
+- `skip_unknown`
+- `skip_upload_in_progress`
+- `skip_file_missing`
+- `skip_file_too_small`
+- `skip_already_finalized`
+- `file_size_progress`
+- `waiting_for_minimum_size`
 - `upload_attempted`
+- `upload_retry`
 - `upload_succeeded`
 - `upload_failed`
 - `parse_succeeded`
+- `parse_pending`
 - `parse_failed`
+- `parse_result_unknown_fields`
+- `final_candidate_ready`
+- `final_candidate_accepted`
+- `final_candidate_deferred`
+- `final_candidate_reopened`
+- `batch_upload_started`
+- `batch_upload_scanned`
+- `batch_upload_file_started`
+- `batch_upload_file_stable`
+- `batch_upload_file_skipped`
+- `batch_upload_file_succeeded`
+- `batch_upload_file_failed`
+- `batch_upload_finished`
+- `batch_upload_failed`
+- `stream_handoff_opened`
+- `stream_sources_listed`
+- `stream_capture_requested`
+- `stream_preview_started`
+- `stream_source_ready`
+- `stream_started`
+- `stream_chunk_uploaded`
+- `stream_chunk_dropped`
+- `stream_heartbeat`
+- `stream_stopped`
+- `stream_track_ended`
+- `stream_recorder_error`
+- `stream_chunk_failed`
+- `stream_heartbeat_failed`
+- `stream_error`
 - `heartbeat`
 
 The watcher posts to `POST /api/watcher/events`. The endpoint accepts a single event object or `{ "events": [...] }` batches up to 25 events and returns `{ "ok": true }` on successful or non-blocking best-effort handling.
@@ -52,6 +109,53 @@ Telemetry must never store watcher tokens, secrets, private keys, auth headers, 
 Replay file telemetry stores the basename only, for example `recorded-game.aoe2record`, not the full local path. Metadata is sanitized server-side and drops suspicious secret-shaped keys such as `token`, `secret`, `password`, `apiKey`, `authorization`, `cookie`, and `privateKey`.
 
 Telemetry failures must not block the watcher. The Electron app uses fire-and-forget telemetry with short timeouts; upload and replay monitoring continue if telemetry is unavailable.
+
+## Finality Contract
+
+Upload responses can include:
+
+- `finality_status = live`
+- `finality_status = live_pending_parse`
+- `finality_status = final_not_ready`
+- `finality_status = final_unparsed_proof`
+- `finality_status = trusted_final`
+- `finality_status = trusted_final_duplicate`
+- `finality_status = trusted_final_refreshed`
+- `finality_status = reviewed_match_duplicate`
+- `finality_status = reviewed_match_refreshed`
+
+Only `trusted_final*` and `reviewed_match*` statuses should set `should_settle = true`. The watcher treats every other final response as a deferred candidate and keeps monitoring the replay file.
+
+## Admin Watcher Diagnostics Rail
+
+`/admin/wolochain` includes an Admin Watcher Diagnostics rail that combines
+`watcher_client_events`, `replay_parse_attempts`, and watcher-backed
+`game_stats` rows.
+
+`/admin/watcher-funnel` adds a conversion/diagnostic command surface, including dedicated support tiles for known watcher users and any signed-in user who emits runtime telemetry. Use it while users are running the watcher to inspect start/stop/heartbeat, auth, replay detection, final-candidate deferrals, upload failures, finality status, version, platform, watcher id, session id, streamer status, source choice, upload chunks, heartbeat freshness, and streamer errors.
+
+Per user, it shows:
+
+- `app_version`
+- `platform`
+- `artifact`
+- last heartbeat
+- last watcher event
+- replay file count
+- replay hash count
+- parsed finals
+- unparsed finals
+- upload failures
+- parse failures
+- streamer source/mode
+- stream chunk and heartbeat counts
+- upload queue, latency, and dropped slice counts
+- latest stream error or status detail
+- replay-file rollups with statuses, parse attempts, parsed game ids, and failure breadcrumbs
+
+Use this rail when a player says the watcher saw a replay but the site did not
+show a live game or final result. The rail is diagnostic only: it does not
+fabricate replay outcomes and it does not replace parser truth.
 
 ## Debug Queries
 
@@ -102,6 +206,15 @@ where parse_source in ('watcher_live', 'watcher_final')
   and user_uid is not null;
 ```
 
+Header-only fallback watcher rows:
+
+```sql
+select id, user_uid, original_filename, created_at, parse_source, parse_reason
+from game_stats
+where parse_reason = 'header_only_summary_fallback'
+order by created_at desc;
+```
+
 Manual upload users:
 
 ```sql
@@ -110,4 +223,3 @@ from game_stats
 where parse_source = 'file_upload'
   and user_uid is not null;
 ```
-

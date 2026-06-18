@@ -7,7 +7,7 @@ type ReplayPlayerRecord = Record<string, unknown>;
 
 const EARLY_EXIT_PARSE_REASON = "hd_early_exit_under_60s";
 
-const DE_CIVILIZATION_NAMES: Record<number, string> = {
+const HD_CIVILIZATION_NAMES: Record<number, string> = {
   1: "Britons",
   2: "Franks",
   3: "Goths",
@@ -237,7 +237,7 @@ export function normalizeDurationSeconds(value: number | null | undefined) {
 
   const rounded = Math.floor(value);
 
-  // Some parsed HD replays still come through in milliseconds for shorter games.
+  // Some parsed DE replays still come through in milliseconds for shorter games.
   if (rounded > 12 * 3600) {
     return Math.max(1, Math.floor(rounded / 1000));
   }
@@ -300,7 +300,7 @@ export function readPlayerCivilizationLabel(player: ReplayPlayerRecord) {
 
   const value = player.civilization;
   if (typeof value === "number" && Number.isFinite(value)) {
-    return DE_CIVILIZATION_NAMES[Math.round(value)] || `Unknown (${Math.round(value)})`;
+    return HD_CIVILIZATION_NAMES[Math.round(value)] || `Unknown (${Math.round(value)})`;
   }
 
   if (typeof value === "string" && value.trim()) {

@@ -6,6 +6,9 @@ import type {
   SettlementRailRow,
   SettlementRailSummary,
 } from "@/components/admin/WoloSettlementRail";
+import type { AdminJourneySummary } from "@/lib/adminJourneyIntelligence";
+import type { WalletFrictionRailPayload } from "@/lib/adminWalletFriction";
+import type { HonorKind } from "@/lib/communityHonors";
 import type { ScheduledMatchColorTag } from "@/lib/scheduledMatchPreferences";
 import type { TileViewMode, TileViewPreferences } from "@/lib/tileViewPreferences";
 
@@ -14,6 +17,8 @@ export type FounderBonusType = "participants" | "winner";
 export type Badge = {
   id: number;
   label: string;
+  title: string;
+  honorKind: HonorKind;
   note: string | null;
   status: string;
   displayOnProfile: boolean;
@@ -145,6 +150,7 @@ export type AdminUserRow = {
   recentActions: Activity[];
   recentActionsTotalCount: number;
   lastActivityAt: string | null;
+  journeySummary: AdminJourneySummary | null;
   pendingBadgeCount: number;
   pendingGiftCount: number;
   pendingWoloClaims: ClaimRow[];
@@ -178,8 +184,10 @@ export type AdminOverview = {
     label: string;
     basicCount: number;
     advancedCount: number;
+    extremeCount: number;
     basicPercent: number;
     advancedPercent: number;
+    extremePercent: number;
     preferredMode: TileViewMode;
   }>;
   scheduledPreferenceUsage: {
@@ -288,6 +296,7 @@ export type AdminUsersPayload = {
     summary: MarketRailSummary;
     rows: MarketRailRow[];
   };
+  walletFriction: WalletFrictionRailPayload;
   watcherDownloads: WatcherDownloadsPayload;
 };
 
@@ -321,6 +330,7 @@ export type AdminUserLiveRow = Pick<
   | "recentActions"
   | "recentActionsTotalCount"
   | "lastActivityAt"
+  | "journeySummary"
   | "pendingBadgeCount"
   | "pendingGiftCount"
   | "pendingWoloClaimCount"
@@ -335,11 +345,20 @@ export type AdminUsersLivePayload = {
 
 export type AdminUsersRailsPayload = Pick<
   AdminUsersPayload,
-  "marketRail" | "settlementRail" | "watcherDownloads"
+  "marketRail" | "settlementRail" | "walletFriction" | "watcherDownloads"
 >;
 
 export type DraftState = {
   customBadge: string;
+  beltTitle: string;
+  beltNote: string;
+  beltDisplayOnProfile: boolean;
+  artifactTitle: string;
+  artifactNote: string;
+  artifactDisplayOnProfile: boolean;
+  designationTitle: string;
+  designationNote: string;
+  designationDisplayOnProfile: boolean;
   giftKind: string;
   giftAmount: string;
   giftNote: string;

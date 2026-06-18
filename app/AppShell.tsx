@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Crown, Globe2, MessageSquare, X } from "lucide-react";
 import UserExperienceTracker from "@/components/analytics/UserExperienceTracker";
 import HeaderInboxControl from "@/components/contact/HeaderInboxControl";
 import HeaderMenu from "@/components/HeaderMenu";
@@ -18,6 +19,7 @@ import {
 } from "@/components/lobby/LobbyAppearanceContext";
 import { GlobalInstallAppPrompt } from "@/components/pwa/InstallAppPrompt";
 import MobileFloatingNav from "@/components/pwa/MobileFloatingNav";
+import AoE2WarFooter from "@/components/pwa/AoE2WarFooter";
 import { Toaster } from "sonner";
 import { Providers } from "./Providers";
 import { UserAuthProvider, useUserAuth } from "@/context/UserAuthContext";
@@ -35,6 +37,12 @@ const HEADER_LINKS: ReadonlyArray<{
   { href: "/staking", label: "Staking" },
 ];
 
+const KINGDOM_LINKS = [
+  { href: "/champions", label: "Champions", icon: Crown, body: "Belts, reigns, title rules" },
+  { href: "/national-champions", label: "Nations", icon: Globe2, body: "Beacon map and national bounties" },
+  { href: "/forum", label: "Forum", icon: MessageSquare, body: "War Room threads and community" },
+] as const;
+
 function HeaderPillLink({
   href,
   label,
@@ -51,10 +59,107 @@ function HeaderPillLink({
   return (
     <Link
       href={href}
-      className={`relative inline-flex items-center justify-center overflow-visible rounded-full border px-3 py-1.5 text-xs transition ${className}`}
+      className={`relative inline-flex items-center justify-center overflow-visible rounded-full border px-2.5 py-1.5 text-xs transition xl:px-3 ${className}`}
     >
       <span className="relative z-10">{displayLabel}</span>
     </Link>
+  );
+}
+
+function KingdomNavItem({
+  className,
+}: {
+  className: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const rootRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div
+      ref={rootRef}
+      className="group relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocusCapture={() => setOpen(true)}
+    >
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Open Kingdom pages"
+        onClick={() => setOpen((value) => !value)}
+        className={`relative inline-flex min-h-8 min-w-9 items-center justify-center overflow-visible rounded-full border px-2.5 py-1.5 text-xs transition xl:px-3 ${className}`}
+      >
+        <span className="relative z-10">🏰</span>
+      </button>
+
+      <div
+        className={`fixed inset-x-3 top-[calc(env(safe-area-inset-top)+8.25rem)] z-[150] translate-y-2 opacity-0 transition duration-150 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:w-[min(21rem,calc(100vw-1.5rem))] ${
+          open
+            ? "pointer-events-auto translate-y-3 opacity-100"
+            : "pointer-events-none group-hover:pointer-events-auto group-hover:translate-y-3 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-3 group-focus-within:opacity-100"
+        }`}
+      >
+        <div className="overflow-hidden rounded-[1.25rem] border border-amber-200/18 bg-[#07101a]/95 p-2 shadow-[0_24px_80px_rgba(0,0,0,0.48)] backdrop-blur-xl">
+          <div className="flex items-center justify-between gap-3 px-2 py-2 sm:hidden">
+            <div className="text-[11px] uppercase tracking-[0.28em] text-amber-100/70">Kingdom</div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-300"
+              aria-label="Close Kingdom menu"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="grid gap-1">
+            {KINGDOM_LINKS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  role="menuitem"
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-3 rounded-[1rem] px-3 py-2.5 text-left transition hover:bg-white/[0.06]"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-amber-100">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-100">{item.label}</div>
+                    <div className="mt-0.5 truncate text-xs text-slate-500">{item.body}</div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -77,6 +182,7 @@ function InnerShell({ children }: { children: React.ReactNode }) {
   const [requestCount, setRequestCount] = React.useState(0);
   const isContactPage = pathname?.startsWith("/contact-emaren");
   const isStakingPage = pathname?.startsWith("/staking");
+  const isLobbySurface = pathname === "/" || pathname?.startsWith("/lobby");
   const headerHref = isStakingPage ? "/staking" : "/lobby";
   const headerTitle = isStakingPage ? "WOLO Staking" : "Tournament Lobby";
   const headerSkin = getLobbyHeaderSkin(themeKey);
@@ -116,7 +222,7 @@ function InnerShell({ children }: { children: React.ReactNode }) {
     void loadHeaderCounts();
     const interval = window.setInterval(() => {
       void loadHeaderCounts();
-    }, 10_000);
+    }, 30_000);
 
     return () => {
       cancelled = true;
@@ -143,7 +249,7 @@ function InnerShell({ children }: { children: React.ReactNode }) {
               <div className="min-w-0 flex-1">
                 <Link href={headerHref} className="inline-block min-w-0">
                   <div className={`text-[11px] uppercase tracking-[0.35em] transition ${headerTone.eyebrow}`}>
-                    AoE2DE War Wagers
+                    AoE2DE Bets
                   </div>
                   <h1 className="text-2xl font-semibold leading-tight text-white transition hover:text-amber-100">
                     {headerTitle}
@@ -184,8 +290,8 @@ function InnerShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
 
-            <nav className="w-full overflow-x-auto overflow-y-visible pb-1 pt-2 [scrollbar-width:none] [-ms-overflow-style:none]">
-              <div className="flex min-w-max items-center gap-2 pr-1 whitespace-nowrap">
+            <nav className="w-full overflow-visible pb-1 pt-2">
+              <div className="flex flex-wrap items-center gap-2 pr-1">
                 {HEADER_LINKS.map((link, index) => (
                   <React.Fragment key={link.href}>
                     <HeaderPillLink
@@ -197,6 +303,7 @@ function InnerShell({ children }: { children: React.ReactNode }) {
                     {index === 0 ? <HeaderLiveGamesLink liveGamesCount={liveGamesCount} /> : null}
                   </React.Fragment>
                 ))}
+                <KingdomNavItem className={headerSkin.surface} />
                 {isAdmin ? (
                   <Link
                     href="/admin/user-list"
@@ -209,11 +316,11 @@ function InnerShell({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
 
-          <div className="hidden lg:grid lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-3">
+          <div className="hidden lg:grid lg:grid-cols-[minmax(9rem,1fr)_minmax(0,44rem)_minmax(9rem,1fr)] lg:items-center lg:gap-3 xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="min-w-0">
               <Link href={headerHref} className="inline-block min-w-0">
                 <div className={`text-xs uppercase tracking-[0.35em] transition ${headerTone.eyebrow}`}>
-                  AoE2DE War Wagers
+                  AoE2DE Bets
                 </div>
                 <h1 className="text-xl font-semibold text-white transition hover:text-amber-100">
                   {headerTitle}
@@ -221,7 +328,7 @@ function InnerShell({ children }: { children: React.ReactNode }) {
               </Link>
             </div>
 
-            <nav className="flex max-w-full items-center gap-2 overflow-x-auto overflow-y-visible whitespace-nowrap pb-1 pt-2 [scrollbar-width:none] [-ms-overflow-style:none] lg:justify-self-center lg:pb-0">
+            <nav className="flex max-w-full flex-wrap items-center justify-center gap-1.5 overflow-visible pb-1 pt-2 lg:justify-self-center lg:pb-0 xl:gap-2">
               {HEADER_LINKS.map((link, index) => (
                 <React.Fragment key={link.href}>
                   <HeaderPillLink
@@ -233,6 +340,7 @@ function InnerShell({ children }: { children: React.ReactNode }) {
                   {index === 0 ? <HeaderLiveGamesLink liveGamesCount={liveGamesCount} /> : null}
                 </React.Fragment>
               ))}
+              <KingdomNavItem className={headerSkin.surface} />
             </nav>
 
             <div className="flex flex-col items-end gap-2 lg:justify-self-end">
@@ -264,13 +372,16 @@ function InnerShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main
-        className={`mx-auto flex min-h-0 min-w-0 w-full max-w-6xl flex-1 flex-col px-3 py-4 pb-32 sm:px-4 lg:pb-4 ${
+        className={`mx-auto flex min-h-0 min-w-0 w-full flex-1 flex-col px-3 py-4 pb-32 sm:px-4 lg:pb-4 ${
+          isLobbySurface ? "max-w-[96rem]" : "max-w-6xl"
+        } ${
           isContactPage ? "overflow-hidden" : "overflow-x-hidden"
         }`}
       >
         <GlobalInstallAppPrompt />
         {children}
       </main>
+      {!isContactPage ? <AoE2WarFooter /> : null}
       <MobileFloatingNav />
       <Toaster richColors />
     </div>

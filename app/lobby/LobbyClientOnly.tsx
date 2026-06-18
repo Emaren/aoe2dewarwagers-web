@@ -9,7 +9,7 @@ const HomePageClient = dynamic(() => import("@/app/HomePageClient"), {
     <main className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-6xl px-6 py-24">
         <p className="text-sm uppercase tracking-[0.35em] text-amber-200/70">
-          AoE2DE War Wagers
+          AoE2DE Bets
         </p>
         <h1 className="mt-3 text-3xl font-semibold">Loading lobby...</h1>
       </div>

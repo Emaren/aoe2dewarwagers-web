@@ -6,8 +6,15 @@ import { promisify } from "node:util";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { WOLO_ADDRESS_PREFIX, WOLO_BASE_DENOM, WOLO_CHAIN_ID } from "@/lib/woloChain";
+import {
+  WOLO_ADDRESS_PREFIX,
+  WOLO_BASE_DENOM,
+  WOLO_CHAIN_ID,
+  WOLO_MAINNET_CHAIN_ID,
+  isWoloMainnet,
+} from "@/lib/woloChain";
 import { fetchWoloBalanceAmount } from "@/lib/woloRuntime";
+import { WOLO_MAINNET_FAUCET_HOT_WALLET_ADDRESS } from "@/lib/woloMainnetWallets";
 import { getPrisma } from "@/lib/prisma";
 import { resolveRequestUid } from "@/lib/requestIdentity";
 import { recordUserActivity } from "@/lib/userExperience";
@@ -26,20 +33,37 @@ const NO_STORE_HEADERS = {
 const FAUCET_LEDGER_PATH =
   process.env.WOLO_FAUCET_LEDGER_PATH?.trim() ||
   path.join(process.cwd(), "storage", "wolo-faucet", "claims.json");
+const MAINNET_FAUCET_CLI = "/usr/local/bin/wolochaind-mainnet";
+const MAINNET_FAUCET_HOME = "/var/lib/aoe2dewarwagers-wolo-mainnet";
+const MAINNET_FAUCET_KEY_NAME = "faucet-hot-mainnet";
+const MAINNET_FAUCET_NODE_RPC = "http://127.0.0.1:27657";
+const isMainnetFaucetRuntime = isWoloMainnet();
 const FAUCET_CLI =
   process.env.WOLO_FAUCET_CLI?.trim() ||
-  path.join(os.homedir(), "projects", "WoloChain", "build", "wolochaind");
+  (isMainnetFaucetRuntime
+    ? MAINNET_FAUCET_CLI
+    : path.join(os.homedir(), "projects", "WoloChain", "build", "wolochaind"));
 const FAUCET_HOME =
-  process.env.WOLO_FAUCET_HOME?.trim() || path.join(os.homedir(), ".wolochain");
-const FAUCET_FROM = process.env.WOLO_FAUCET_FROM?.trim() || "faucetgrowth";
-const FAUCET_CHAIN_ID = process.env.WOLO_FAUCET_CHAIN_ID?.trim() || WOLO_CHAIN_ID;
+  process.env.WOLO_FAUCET_HOME?.trim() ||
+  (isMainnetFaucetRuntime ? MAINNET_FAUCET_HOME : path.join(os.homedir(), ".wolochain"));
+const FAUCET_FROM =
+  process.env.WOLO_FAUCET_FROM?.trim() ||
+  (isMainnetFaucetRuntime ? MAINNET_FAUCET_KEY_NAME : "faucetgrowth");
+const FAUCET_ADDRESS = normalizeAddress(process.env.WOLO_FAUCET_ADDRESS);
+const FAUCET_SENDER_ADDRESS =
+  isMainnetFaucetRuntime ? WOLO_MAINNET_FAUCET_HOT_WALLET_ADDRESS : FAUCET_FROM;
+const FAUCET_CHAIN_ID =
+  process.env.WOLO_FAUCET_CHAIN_ID?.trim() ||
+  (isMainnetFaucetRuntime ? WOLO_MAINNET_CHAIN_ID : WOLO_CHAIN_ID);
 const FAUCET_NODE_RPC =
   process.env.WOLO_FAUCET_NODE_RPC?.trim() ||
   process.env.WOLO_INTERNAL_RPC_URL?.trim() ||
+  process.env.WOLO_RPC_URL?.trim() ||
   process.env.NEXT_PUBLIC_WOLO_RPC_URL?.trim() ||
-  "http://127.0.0.1:26657";
+  (isMainnetFaucetRuntime ? MAINNET_FAUCET_NODE_RPC : "http://127.0.0.1:26657");
 const FAUCET_KEYRING_BACKEND =
-  process.env.WOLO_FAUCET_KEYRING_BACKEND?.trim() || "test";
+  process.env.WOLO_FAUCET_KEYRING_BACKEND?.trim() ||
+  (isMainnetFaucetRuntime ? "test" : "test");
 const FAUCET_FEE =
   process.env.WOLO_FAUCET_FEE?.trim() || `5000${WOLO_BASE_DENOM}`;
 
@@ -66,6 +90,48 @@ function validateWoloAddress(address: string) {
   }
 
   return null;
+}
+
+function isBannedMainnetFaucetTarget(value: string) {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return (
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost") &&
+      (url.port === "26657" || url.port === "8091")
+    );
+  } catch {
+    return /(?:localhost|127\.0\.0\.1):(26657|8091)/.test(value);
+  }
+}
+
+function validateFaucetRuntimeConfig() {
+  if (!isMainnetFaucetRuntime) return null;
+
+  const issues: string[] = [];
+  if (FAUCET_CHAIN_ID !== WOLO_MAINNET_CHAIN_ID) {
+    issues.push("WOLO_FAUCET_CHAIN_ID must be wolo-1 for mainnet claims.");
+  }
+  if (FAUCET_FROM !== MAINNET_FAUCET_KEY_NAME) {
+    issues.push("WOLO_FAUCET_FROM must be faucet-hot-mainnet for mainnet claims.");
+  }
+  if (FAUCET_ADDRESS && FAUCET_ADDRESS !== WOLO_MAINNET_FAUCET_HOT_WALLET_ADDRESS) {
+    issues.push("WOLO_FAUCET_ADDRESS must be the funded wolo-1 Faucet Hot Wallet.");
+  }
+  if (FAUCET_KEYRING_BACKEND !== "test") {
+    issues.push("WOLO_FAUCET_KEYRING_BACKEND must be test for the mainnet app signer home.");
+  }
+  if (FAUCET_CLI !== MAINNET_FAUCET_CLI && !process.env.WOLO_FAUCET_CLI?.trim()) {
+    issues.push("WOLO_FAUCET_CLI must point at the mainnet wolochaind binary.");
+  }
+  if (FAUCET_HOME !== MAINNET_FAUCET_HOME && !process.env.WOLO_FAUCET_HOME?.trim()) {
+    issues.push("WOLO_FAUCET_HOME must point at the mainnet app signer home.");
+  }
+  if (isBannedMainnetFaucetTarget(FAUCET_NODE_RPC)) {
+    issues.push("WOLO_FAUCET_NODE_RPC must not point at the local testnet RPC or 8091.");
+  }
+
+  return issues.length > 0 ? issues.join(" ") : null;
 }
 
 function parseJsonRecord(value: string) {
@@ -113,7 +179,7 @@ async function sendFaucetTransfer(address: string) {
     "tx",
     "bank",
     "send",
-    FAUCET_FROM,
+    FAUCET_SENDER_ADDRESS,
     address,
     `${CLAIM_AMOUNT_UWOLO}${WOLO_BASE_DENOM}`,
     "--home",
@@ -132,6 +198,10 @@ async function sendFaucetTransfer(address: string) {
     "json",
     "-y",
   ];
+
+  if (isMainnetFaucetRuntime) {
+    txArgs.push("--from", FAUCET_FROM);
+  }
 
   const { stdout, stderr } = await execFileAsync(FAUCET_CLI, txArgs, {
     maxBuffer: 1024 * 1024,
@@ -195,6 +265,14 @@ export async function POST(request: NextRequest) {
 
     if (addressError) {
       return NextResponse.json({ detail: addressError }, { status: 400 });
+    }
+
+    const runtimeConfigError = validateFaucetRuntimeConfig();
+    if (runtimeConfigError) {
+      return NextResponse.json(
+        { detail: runtimeConfigError },
+        { status: 503, headers: NO_STORE_HEADERS }
+      );
     }
 
     const now = Date.now();

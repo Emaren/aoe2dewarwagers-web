@@ -13,6 +13,7 @@ import {
   Gem,
   HandCoins,
   Landmark,
+  ShieldCheck,
   Swords,
   Trophy,
   Users,
@@ -21,8 +22,11 @@ import {
 
 import { getPrisma } from "@/lib/prisma";
 import {
+  BETTING_FEE_RATE_BPS,
+  BPS_DENOMINATOR,
   loadStakingLeaderboard,
   loadStakingSummary,
+  STAKER_SHARE_BPS,
   type StakingActivityItem,
   type StakingLeaderboardRow,
 } from "@/lib/staking";
@@ -34,6 +38,7 @@ import { getStakingWalletReserveHeadroomWolo } from "@/lib/stakingExecution";
 import { fetchWoloBalanceAmount } from "@/lib/woloRuntime";
 import {
   formatWoloAmount,
+  getWoloBetEscrowRuntime,
   shortenAddress,
   WOLO_COIN_DECIMALS,
   WOLO_REST_URL,
@@ -44,6 +49,7 @@ import StakingActivityFeed from "./StakingActivityFeed";
 import StakingHeroStakeTiles from "./StakingHeroStakeTiles";
 import StakingActionTile from "./StakingActionTile";
 import StakingAdvancedTrigger from "./StakingAdvancedTrigger";
+import StakingPayoutSchedule from "./StakingPayoutSchedule";
 import TreasuryActions from "./TreasuryActions";
 
 export const runtime = "nodejs";
@@ -85,6 +91,8 @@ type EconomySnapshot = {
   activeStakers: number | null;
   totalStakedWolo: number | null;
   totalStakingWeight: string | null;
+  totalTxFeesAllTimeWolo?: number | null;
+  directTransferCount: number;
   activity: ActivityItem[];
 };
 
@@ -109,6 +117,7 @@ type TrustWalletSnapshot = {
 };
 
 type CommunityTreasurySnapshot = TrustWalletSnapshot;
+type CustodyWalletSnapshot = TrustWalletSnapshot;
 
 const PERIODS: Array<{ key: PeriodKey; label: string; days: number | null }> = [
   { key: "24h", label: "24H", days: 1 },
@@ -144,6 +153,18 @@ const TREASURY_ADDRESS_ENV_NAMES = [
   "NEXT_PUBLIC_WOLO_TREASURY_WALLET",
 ] as const;
 
+const PAYOUT_ADDRESS_ENV_NAMES = ["WOLO_BET_PAYOUT_ADDRESS"] as const;
+
+const DEX_LIQUIDITY_ADDRESS_ENV_NAMES = [
+  "WOLO_DEX_LIQUIDITY_ADDRESS",
+  "WOLO_DEX_LIQUIDITY_WALLET_ADDRESS",
+  "WOLO_LIQUIDITY_ADDRESS",
+  "WOLO_LIQUIDITY_WALLET_ADDRESS",
+  "NEXT_PUBLIC_WOLO_DEX_LIQUIDITY_ADDRESS",
+  "NEXT_PUBLIC_WOLO_DEX_LIQUIDITY_WALLET_ADDRESS",
+  "NEXT_PUBLIC_WOLO_LIQUIDITY_ADDRESS",
+] as const;
+
 const BOARD_ROWS: Record<
   BoardKey,
   BoardRow[]
@@ -161,8 +182,8 @@ const BOARD_ROWS: Record<
     { player: "New Backer", badge: "Open seat", staked: "Ledger pending", rewards: "Modeled", weight: "Opening soon", status: "Preview", tone: "slate" },
   ],
   rewards: [
-    { player: "Daily Pool", badge: "Preparing", staked: "1% fee", rewards: "50% share", weight: "Pool weight", status: "Stakers", tone: "gold" },
-    { player: "Treasury", badge: "Community", staked: "1% fee", rewards: "50% share", weight: "Visible", status: "Visible", tone: "emerald" },
+    { player: "Daily Pool", badge: "Preparing", staked: "1% of pot", rewards: "50% share", weight: "Pool weight", status: "Stakers", tone: "gold" },
+    { player: "Treasury", badge: "Community", staked: "1% of pot", rewards: "50% share", weight: "Visible", status: "Visible", tone: "emerald" },
     { player: "Next Match", badge: "Settles soon", staked: "Open", rewards: "Feeds pool", weight: "Live loop", status: "Live loop", tone: "sky" },
     { player: "Reward Cutover", badge: "Ledger", staked: "Pending", rewards: "Preparing", weight: "Pending", status: "Next", tone: "slate" },
   ],
@@ -180,6 +201,15 @@ function normalizePeriod(value: string | string[] | undefined): PeriodKey {
 function normalizeBoard(value: string | string[] | undefined): BoardKey {
   const raw = firstParam(value);
   return raw === "earners" || raw === "rewards" ? raw : "stakers";
+}
+
+function stakerSlug(player: string) {
+  return player
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function hrefFor(params: { period: PeriodKey; board: BoardKey }) {
@@ -215,6 +245,12 @@ function formatWolo(
 
 function formatFeeShareWolo(value: number | null) {
   return formatWolo(value, { compact: false, decimals: 2 });
+}
+
+function formatBpsPercent(value: number) {
+  return `${new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(value / 100)}%`;
 }
 
 function weightMeter(value: string | null | undefined) {
@@ -273,6 +309,14 @@ function resolveTreasuryAddress() {
   return null;
 }
 
+function resolveAddressFromNames(names: readonly string[]) {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
 function buildWalletProofUrl(address: string) {
   const template = process.env.NEXT_PUBLIC_WOLO_EXPLORER_ADDRESS_URL?.trim();
   if (template) return template.replace("{address}", encodeURIComponent(address));
@@ -307,6 +351,51 @@ async function loadCommunityTreasurySnapshot(): Promise<CommunityTreasurySnapsho
       proofUrl: buildWalletProofUrl(address),
       status: "ready",
       detail: "Public wallet",
+    };
+  } catch (error) {
+    return {
+      address,
+      shortAddress: shortenAddress(address, 10, 6),
+      balanceLabel: "--",
+      balanceWolo: null,
+      proofUrl: buildWalletProofUrl(address),
+      status: "error",
+      detail: error instanceof Error ? "Balance lookup pending." : "Balance pending.",
+    };
+  }
+}
+
+async function loadCustodyWalletSnapshot({
+  address,
+  pendingDetail,
+  readyDetail,
+}: {
+  address: string | null;
+  pendingDetail: string;
+  readyDetail: string;
+}): Promise<CustodyWalletSnapshot> {
+  if (!address) {
+    return {
+      address: null,
+      shortAddress: "Wallet pending",
+      balanceLabel: "--",
+      balanceWolo: null,
+      proofUrl: null,
+      status: "pending",
+      detail: pendingDetail,
+    };
+  }
+
+  try {
+    const amountUWolo = await fetchWoloBalanceAmount(address);
+    return {
+      address,
+      shortAddress: shortenAddress(address, 10, 6),
+      balanceLabel: `${formatWoloAmount(amountUWolo)} WOLO`,
+      balanceWolo: Number(amountUWolo) / 10 ** WOLO_COIN_DECIMALS,
+      proofUrl: buildWalletProofUrl(address),
+      status: "ready",
+      detail: readyDetail,
     };
   } catch (error) {
     return {
@@ -380,6 +469,8 @@ function fallbackSnapshot(period: PeriodKey): EconomySnapshot {
     activeStakers: null,
     totalStakedWolo: null,
     totalStakingWeight: null,
+    totalTxFeesAllTimeWolo: null,
+    directTransferCount: 0,
     activity: [
       {
         label: "Economy feed is offline",
@@ -430,20 +521,66 @@ export default async function StakingPage({
     console.warn("Failed to load staking leaderboard:", error);
   }
 
-  const [stakingWallet, treasury] = await Promise.all([
+  const [stakingWallet, treasury, escrowWallet, payoutWallet, dexLiquidityWallet] = await Promise.all([
     loadStakingWalletSnapshot(),
     loadCommunityTreasurySnapshot(),
+    loadCustodyWalletSnapshot({
+      address: getWoloBetEscrowRuntime().escrowAddress,
+      pendingDetail: "Bet escrow address pending.",
+      readyDetail: "Bet escrow",
+    }),
+    loadCustodyWalletSnapshot({
+      address: resolveAddressFromNames(PAYOUT_ADDRESS_ENV_NAMES),
+      pendingDetail: "Payout signer address pending.",
+      readyDetail: "Payout signer",
+    }),
+    loadCustodyWalletSnapshot({
+      address: resolveAddressFromNames(DEX_LIQUIDITY_ADDRESS_ENV_NAMES),
+      pendingDetail: "DEX liquidity wallet pending.",
+      readyDetail: "DEX liquidity",
+    }),
   ]);
+  const txFeeEvents = await getPrisma().stakingEvent.findMany({
+    where: {
+      status: "CONFIRMED",
+    },
+    select: {
+      metadata: true,
+    },
+  });
+  snapshot.totalTxFeesAllTimeWolo = txFeeEvents.reduce((sum, event) => {
+    const metadata = event.metadata;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return sum;
+
+    const raw = (metadata as Record<string, unknown>).txFeeWolo;
+    const value =
+      typeof raw === "number"
+        ? raw
+        : typeof raw === "string"
+          ? Number.parseFloat(raw)
+          : 0;
+
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+
   const stakingWalletReserveHeadroomWolo = getStakingWalletReserveHeadroomWolo();
   const visibleStakingWalletReserveWolo =
     stakingWallet.balanceWolo == null || snapshot.totalStakedWolo == null
       ? null
       : Math.max(0, stakingWallet.balanceWolo - snapshot.totalStakedWolo);
-  const activityRows = snapshot.activity.slice(0, 6);
+  const activityRows = snapshot.activity.slice(0, 16);
+  const bettingFeeLabel = formatBpsPercent(BETTING_FEE_RATE_BPS);
+  const stakerShareLabel = formatBpsPercent(
+    Math.floor((BETTING_FEE_RATE_BPS * STAKER_SHARE_BPS) / BPS_DENOMINATOR)
+  );
+  const treasuryShareLabel = formatBpsPercent(
+    BETTING_FEE_RATE_BPS -
+      Math.floor((BETTING_FEE_RATE_BPS * STAKER_SHARE_BPS) / BPS_DENOMINATOR)
+  );
   const meter = weightMeter(snapshot.totalStakingWeight);
 
   return (
-    <main className="space-y-6 py-3 text-white sm:space-y-7 sm:py-4">
+    <main className="space-y-6 overflow-x-hidden py-3 text-white sm:space-y-7 sm:py-4">
       <style>{`
         @keyframes stakingActivityGlow {
           0% {
@@ -466,7 +603,7 @@ export default async function StakingPage({
           animation: stakingActivityGlow 1.8s ease-out 1;
         }
       `}</style>
-      <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_14%_18%,rgba(148,163,184,0.12),transparent_26%),radial-gradient(circle_at_86%_12%,rgba(16,185,129,0.14),transparent_24%),radial-gradient(circle_at_70%_86%,rgba(59,130,246,0.08),transparent_24%),linear-gradient(135deg,#07101d,#111827_52%,#040712)] p-5 shadow-[0_42px_120px_rgba(2,6,23,0.45)] sm:p-7 lg:p-9">
+      <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_14%_18%,rgba(148,163,184,0.12),transparent_26%),radial-gradient(circle_at_86%_12%,rgba(251,191,36,0.12),transparent_24%),radial-gradient(circle_at_70%_86%,rgba(59,130,246,0.08),transparent_24%),linear-gradient(135deg,#07101d,#111827_52%,#040712)] p-5 shadow-[0_42px_120px_rgba(2,6,23,0.45)] sm:p-7 lg:p-9">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(148,163,184,0.34),transparent)]" />
         <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full border border-amber-300/10" />
         <div className="pointer-events-none absolute bottom-0 left-0 h-24 w-full bg-[linear-gradient(180deg,transparent,rgba(0,0,0,0.2))]" />
@@ -474,7 +611,7 @@ export default async function StakingPage({
         <div className="relative z-10 grid min-w-0 gap-7 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.82fr)] xl:items-stretch">
           <div className="flex h-full min-w-0 flex-col gap-6">
             <div className="flex flex-wrap gap-2">
-              <HeroPill tone="amber">1% betting fee</HeroPill>
+              <HeroPill tone="amber">{bettingFeeLabel} betting fee</HeroPill>
               <HeroPill tone="emerald">50% to stakers</HeroPill>
               <HeroPill tone="slate">No lockups</HeroPill>
             </div>
@@ -486,13 +623,14 @@ export default async function StakingPage({
                   WOLO Economy
                 </div>
               </StakingAdvancedTrigger>
-              <div className="space-y-4 sm:pl-[4.25rem]">
+              <div className="space-y-4">
                 <h1 className="max-w-4xl text-[2.05rem] font-semibold leading-tight text-white sm:text-[2.7rem] lg:text-[3.35rem]">
                   Stake WOLO.
                 </h1>
                 <p className="max-w-3xl text-sm leading-7 text-slate-300 sm:text-base">
                   50% of betting fees go to stakers.
                 </p>
+                  <StakingPayoutSchedule />
               </div>
             </div>
 
@@ -574,12 +712,35 @@ export default async function StakingPage({
               requiredReserveWolo={stakingWalletReserveHeadroomWolo}
             />
             <CommunityTreasuryTile treasury={treasury} />
+            <section className="grid gap-3">
+              <CustodyRailTile
+                title="Bet Escrow"
+                wallet={escrowWallet}
+                icon={<ShieldCheck className="h-4 w-4" />}
+                tone="amber"
+              />
+              <CustodyRailTile
+                title="Bet Payout"
+                wallet={payoutWallet}
+                icon={<HandCoins className="h-4 w-4" />}
+                tone="sky"
+              />
+              <CustodyRailTile
+                title="DEX Liquidity Reserve"
+                wallet={dexLiquidityWallet}
+                icon={<Coins className="h-4 w-4" />}
+                tone="emerald"
+              />
+            </section>
           </div>
         </div>
       </section>
 
       <Panel id="staking-advanced" eyebrow="Recent Activity" title="Live activity">
-        <StakingActivityFeed items={activityRows} />
+        <StakingActivityFeed
+          items={activityRows}
+          loadMoreEndpoint="/api/staking/activity"
+        />
       </Panel>
 
       <section className="space-y-4">
@@ -663,6 +824,13 @@ export default async function StakingPage({
             helper={snapshot.totalStakedWolo ? `${formatWolo(snapshot.totalStakedWolo)} staked` : "Ledger ready"}
             tone="emerald"
           />
+          <EconomyCard
+            icon={<BadgeDollarSign className="h-5 w-5" />}
+            label="Total Tx Fees All Time"
+            value={formatFeeShareWolo(snapshot.totalTxFeesAllTimeWolo ?? null)}
+            helper="Confirmed staking tx fees"
+            tone="amber"
+          />
         </div>
       </section>
 
@@ -673,7 +841,7 @@ export default async function StakingPage({
               <div className="text-xs uppercase tracking-[0.26em] text-amber-100/70">
                 Betting Fee
               </div>
-              <div className="mt-4 text-5xl font-semibold text-white">1%</div>
+              <div className="mt-4 text-5xl font-semibold text-white">{bettingFeeLabel}</div>
               <div className="mt-5 h-3 overflow-hidden rounded-full bg-black/30">
                 <div className="grid h-full grid-cols-2">
                   <div className="bg-amber-200/80" />
@@ -700,13 +868,13 @@ export default async function StakingPage({
               </div>
               <div className="mt-5 grid gap-2">
                 <SplitRow label="Pot" value="20,000 WOLO" />
-                <SplitRow label="Betting fee" value="200 WOLO" />
-                <SplitRow label="Stakers receive" value="100 WOLO" tone="amber" />
-                <SplitRow label="Treasury receives" value="100 WOLO" tone="emerald" />
-                <SplitRow label="Winner receives" value="19,800 WOLO" tone="white" />
+                <SplitRow label="Betting fee" value="400 WOLO" />
+                <SplitRow label="Stakers receive" value="200 WOLO" tone="amber" />
+                <SplitRow label="Treasury receives" value="200 WOLO" tone="emerald" />
+                <SplitRow label="Winner receives" value="19,600 WOLO" tone="white" />
               </div>
               <p className="mt-4 text-sm leading-6 text-slate-300">
-                Every settled bet feeds both pools.
+                Every settled bet feeds both pools: {stakerShareLabel} to stakers and {treasuryShareLabel} to treasury.
               </p>
             </div>
           </div>
@@ -744,7 +912,7 @@ export default async function StakingPage({
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <FormulaTile label="Staking Weight" value="More WOLO + time" helper="WOLO x time" />
-            <FormulaTile label="Daily Pool" value="50% fees" />
+            <FormulaTile label="Daily Pool" value={`${stakerShareLabel} of pot`} helper="50% of fee" />
             <FormulaTile label="Your Share" value="Fair split" />
           </div>
         </div>
@@ -786,8 +954,8 @@ export default async function StakingPage({
 
 function WoloMark() {
   return (
-    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-amber-300/20 bg-amber-300/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-      <Image src={WOLO_LOGO_SRC} alt="" width={32} height={32} className="h-8 w-8 object-contain" />
+    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-amber-300/28 bg-slate-950/80 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+      <Image src={WOLO_LOGO_SRC} alt="" width={48} height={48} className="h-12 w-12 object-contain" />
     </div>
   );
 }
@@ -961,32 +1129,44 @@ function CompactLeaderboardRow({
           ? "border-sky-300/20 bg-sky-500/10 text-sky-100"
           : "border-white/10 bg-white/[0.055] text-slate-200";
 
+  const href = `/staking/stakers/${stakerSlug(row.player)}`;
+
   return (
-    <div className="rounded-[1rem] border border-white/10 bg-white/[0.04] p-3 md:grid md:grid-cols-[2.5rem_1.3fr_0.9fr_1fr_0.75fr] md:items-center md:gap-2">
+    <Link
+      href={href}
+      className="group block rounded-[1rem] border border-white/10 bg-white/[0.04] p-3 transition hover:border-amber-300/30 hover:bg-white/[0.065] hover:shadow-[0_0_28px_rgba(245,158,11,0.08)] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/55 md:grid md:grid-cols-[2.5rem_1.3fr_0.9fr_1fr_0.75fr] md:items-center md:gap-2"
+      aria-label={`Open ${row.player}'s staking hall profile`}
+    >
       <div className="flex items-center justify-between gap-3 md:block">
-        <div className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold ${
-          row.tone === "gold"
-            ? "border-amber-300/25 bg-amber-300/12 text-amber-100"
-            : "border-white/10 bg-white/[0.055] text-slate-200"
-        }`}>
+        <div
+          className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold transition group-hover:scale-105 ${
+            row.tone === "gold"
+              ? "border-amber-300/25 bg-amber-300/12 text-amber-100"
+              : "border-white/10 bg-white/[0.055] text-slate-200"
+          }`}
+        >
           {rank}
         </div>
         <div className="text-xs uppercase tracking-[0.2em] text-slate-500 md:hidden">Rank</div>
       </div>
+
       <div className="mt-3 min-w-0 md:mt-0">
-        <div className="text-sm font-semibold text-white">{row.player}</div>
+        <div className="truncate text-sm font-semibold text-white group-hover:text-amber-50">{row.player}</div>
         <div className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${badgeClass}`}>
           {row.badge}
         </div>
       </div>
+
       <MobileLabel label="Staked" value={row.staked} />
       <MobileLabel label="Weight" value={row.weight} />
+
       <div className={`mt-3 rounded-full border px-2.5 py-1 text-[11px] md:mt-0 md:text-center ${badgeClass}`}>
         {row.status}
       </div>
-    </div>
+    </Link>
   );
 }
+
 
 function CommunityTreasuryTile({
   treasury,
@@ -1017,6 +1197,48 @@ function CommunityTreasuryTile({
           addressLabel={treasury.shortAddress}
           proofUrl={treasury.proofUrl}
           label="community treasury"
+        />
+      </div>
+    </section>
+  );
+}
+
+function CustodyRailTile({
+  title,
+  wallet,
+  icon,
+  tone,
+}: {
+  title: string;
+  wallet: CustodyWalletSnapshot;
+  icon: ReactNode;
+  tone: "amber" | "emerald" | "sky";
+}) {
+  const toneClass =
+    tone === "amber"
+      ? "border-amber-300/20 bg-amber-300/10 text-amber-100"
+      : tone === "emerald"
+        ? "border-emerald-300/20 bg-emerald-500/10 text-emerald-100"
+        : "border-sky-300/20 bg-sky-500/10 text-sky-100";
+
+  return (
+    <section className="rounded-[1.15rem] border border-white/10 bg-white/[0.04] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+            {title}
+          </div>
+          <div className="mt-2 text-xl font-semibold text-white">{wallet.balanceLabel}</div>
+          <div className="mt-1 text-xs text-slate-500">{wallet.detail}</div>
+        </div>
+        <div className={`rounded-full border p-2.5 ${toneClass}`}>{icon}</div>
+      </div>
+      <div className="mt-3">
+        <TreasuryActions
+          address={wallet.address}
+          addressLabel={wallet.shortAddress}
+          proofUrl={wallet.proofUrl}
+          label={title.toLowerCase()}
         />
       </div>
     </section>
