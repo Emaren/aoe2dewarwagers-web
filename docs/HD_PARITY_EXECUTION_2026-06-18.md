@@ -58,3 +58,45 @@ The broad legacy API suite is not a release gate until its missing
    `aoe2dewarwagers-web.service`.
 7. Verify public routes, replay API health, lobby/betting/staking payloads,
    stream routes, watcher release metadata, and watcher artifact downloads.
+
+## Completion record
+
+Completed and verified in production on June 18, 2026.
+
+- Watcher revision: `919ae10`
+- API revision: `b128739`
+- Web revision: `9ee1364`
+- All seven new additive Prisma migrations were applied.
+- No API schema migration was required. The production Alembic ledger remains
+  on its older uninitialized deployment path and was deliberately left
+  untouched because stamping or upgrading it tried to recreate existing
+  tables.
+- Watcher `1.5.0` Windows installer, Windows portable executable, macOS DMG,
+  macOS ZIP, and Linux AppImage all return `200` from their tracked download
+  routes with the expected filenames.
+- The public download page, release metadata, lobby, bets, active-stream,
+  replay-health, and game-stats endpoints return healthy responses.
+- Browser smoke checks passed for `/download`, `/lobby`, `/champions`,
+  `/forum`, `/staking`, `/watch`, and `/wolomania`, with no browser console
+  errors observed.
+- `aoe2dewarwagers-web.service`, `aoe2dewarwagers-api.service`, and nginx are
+  active, and neither DE service logged warning-or-higher entries during the
+  final verification window.
+
+### Download routing correction
+
+The hardened nginx config keeps three separate download lanes:
+
+- `location ^~ /downloads/` for the static package files
+- `location = /download` for the landing page
+- `location ^~ /download/` for tracked artifact routes
+
+The exact `/download` location is required when the slash-suffixed proxy block
+exists. Without it, nginx normalizes `/download` to `/download/` while Next.js
+normalizes `/download/` back to `/download`, creating a redirect loop.
+
+Final routing behavior:
+
+- `/download` returns `200`
+- `/download/` returns one `308` to `/download`
+- tracked `/download/watcher/*` artifact routes return the release files
