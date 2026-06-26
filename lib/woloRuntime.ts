@@ -109,8 +109,21 @@ function requestText(url: string) {
   return new Promise<string>((resolve, reject) => {
     const target = new URL(url);
     const client = target.protocol === "https:" ? https : http;
+    let settled = false;
+    let request: http.ClientRequest | null = null;
 
-    const request = client.request(
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      fn();
+    };
+
+    const timeout = setTimeout(() => {
+      request?.destroy(new Error(`Timed out reaching ${target.hostname}`));
+    }, WOLO_RUNTIME_HTTP_TIMEOUT_MS);
+
+    request = client.request(
       target,
       {
         method: "GET",
@@ -130,11 +143,13 @@ function requestText(url: string) {
           const body = Buffer.concat(chunks).toString("utf8");
 
           if ((response.statusCode || 500) >= 400) {
-            reject(new Error(`Upstream ${target.hostname} returned ${response.statusCode}`));
+            settle(() =>
+              reject(new Error(`Upstream ${target.hostname} returned ${response.statusCode}`))
+            );
             return;
           }
 
-          resolve(body);
+          settle(() => resolve(body));
         });
       }
     );
@@ -143,7 +158,7 @@ function requestText(url: string) {
       request.destroy(new Error(`Timed out reaching ${target.hostname}`));
     });
 
-    request.on("error", reject);
+    request.on("error", (error) => settle(() => reject(error)));
     request.end();
   });
 }
