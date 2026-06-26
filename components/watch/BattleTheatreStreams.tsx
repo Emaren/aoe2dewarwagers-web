@@ -25,7 +25,7 @@ function buildEmbedSrc(stream: WatchStreamPayload | null, browserHost: string) {
   }
 
   if (stream.provider === "twitch") {
-    const parent = encodeURIComponent(browserHost || "aoe2dewarwagers.com");
+    const parent = encodeURIComponent(browserHost || "aoe2war.com");
     return `https://player.twitch.tv/?channel=${encodeURIComponent(
       stream.embedId
     )}&parent=${parent}&autoplay=false&muted=false`;

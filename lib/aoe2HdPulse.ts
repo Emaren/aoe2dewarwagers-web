@@ -90,9 +90,7 @@ export function getEmptyAoe2HdPulseSnapshot(
 }
 
 export async function loadAoe2HdPulseSnapshot(): Promise<Aoe2HdPulseSnapshot> {
-  const sourceUrl =
-    process.env.AOE2DE_PULSE_URL?.trim() ||
-    process.env.AOE2HD_PULSE_URL?.trim();
+  const sourceUrl = process.env.AOE2DE_PULSE_URL?.trim();
   if (!sourceUrl) {
     return getEmptyAoe2HdPulseSnapshot();
   }

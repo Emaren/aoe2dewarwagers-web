@@ -182,9 +182,7 @@ function sourceFor(events: UserActivityEntry[]) {
     return { source: "direct", referrer: null, campaign: campaign ?? null };
   }
 
-  const source = /(^|\.)aoe2dewarwagers\.com$/i.test(referrerHost)
-    ? "internal"
-    : referrerHost;
+  const source = /(^|\.)aoe2war\.com$/i.test(referrerHost) ? "internal" : referrerHost;
   return {
     source,
     referrer: referrerPath ? `${referrerHost}${referrerPath}` : referrerHost,

@@ -4,8 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "AoE2DEWarWagers",
     short_name: "AoE2Bets",
-    description:
-      "Age of Empires II: Definitive Edition live games, challenges, WOLO, and wagers.",
+    description: "Age of Empires II DE live games, challenges, WOLO, and wagers.",
     start_url: "/app?source=pwa",
     scope: "/",
     display: "standalone",

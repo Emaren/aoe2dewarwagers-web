@@ -37,7 +37,7 @@ const woloLinks = [
 const communityLinks = [
   { href: "https://discord.gg/EfghKZY7U9", label: "Discord", icon: MessageCircle },
   { href: "https://t.me/WoloChain", label: "Telegram", icon: MessageCircle },
-  { href: "https://x.com/AoE2DEWarWagers", label: "X", icon: Globe2 },
+  { href: "https://x.com/AoE2WAR", label: "X", icon: Globe2 },
   {
     href: "https://medium.com/@WoloChain/introducing-wolochain-the-dedicated-chain-for-aoe2war-8258113052ee",
     label: "Medium",
@@ -174,7 +174,7 @@ export default function AoE2WarFooter() {
               <div className="mb-5 flex items-center gap-4">
                 <div className="relative h-16 w-16 overflow-hidden rounded-2xl border border-amber-200/25 bg-black/45 shadow-[0_0_44px_rgba(251,191,36,0.18)]">
                   <img
-                    src="/api/media-assets/logo/footer-wolo?fallback=%2Flegacy%2Fwolo-logo-transparent.png"
+                    src="/api/media-assets/logo/footer-wolo?fallback=%2Flegacy%2Fwolo-logo-transparent.webp"
                     alt="WoloChain logo"
                     className="h-full w-full object-contain p-1.5"
                   />
@@ -182,7 +182,7 @@ export default function AoE2WarFooter() {
 
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-[0.46em] text-amber-200/70">
-                    AoE2DE War Wagers
+                    AoE2WAR
                   </div>
                 </div>
               </div>
@@ -219,7 +219,7 @@ export default function AoE2WarFooter() {
 
         <div className="relative flex flex-col gap-3 border-t border-white/10 px-5 py-4 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
           <div>
-            © {new Date().getFullYear()} AoE2DE War Wagers. Replay-backed competition and WoloChain economy.
+            © {new Date().getFullYear()} AoE2WAR. Replay-backed competition and WoloChain economy.
           </div>
           <div className="font-semibold text-slate-400">Aim small. Miss small. ⚔️</div>
         </div>

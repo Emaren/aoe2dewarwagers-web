@@ -28,7 +28,7 @@ import {
   woloChainConfig,
 } from "@/lib/woloChain";
 
-const WOLO_LOGO_SRC = "/legacy/wolo-logo-transparent.png";
+const WOLO_LOGO_SRC = "/legacy/wolo-logo-transparent.webp";
 const STAKE_OPTIONS = [10, 25, 50, 100] as const;
 const BETS_POLL_INTERVAL_MS = 5_000;
 const STAKE_RECOVERY_STORAGE_KEY = "aoe2dewarwagers.betStakeRecovery.v1";
@@ -1263,7 +1263,7 @@ export default function BetsPage() {
 
   function describeBetWalletError(rawError: string) {
     if (isKeplrUnavailableError(rawError)) {
-      return "Keplr is not available in this browser. No bet was placed and no WOLO moved. Open AoE2DE War Wagers in the Chrome profile where Keplr is installed, enable Keplr for aoe2dewarwagers.com, then try again.";
+      return "Keplr is not available in this browser. No bet was placed and no WOLO moved. Open AoE2WAR in the Chrome profile where Keplr is installed, enable Keplr for aoe2war.com, then try again.";
     }
 
     if (/insufficient|not enough|balance/i.test(rawError)) {
@@ -1429,7 +1429,7 @@ export default function BetsPage() {
 
     if (!keplrWindow.keplr) {
       throw new Error(
-        "Keplr is not available in this browser. No bet was placed and no WOLO moved. Open AoE2DE War Wagers in the Chrome profile where Keplr is installed, enable Keplr for aoe2dewarwagers.com, then try again."
+        "Keplr is not available in this browser. No bet was placed and no WOLO moved. Open AoE2WAR in the Chrome profile where Keplr is installed, enable Keplr for aoe2war.com, then try again."
       );
     }
 
@@ -2477,7 +2477,7 @@ function BroadcastVisibilityButton({
 
 function providerLabel(feed: BroadcastFeed | null | undefined) {
   if (!feed) return "Placeholder";
-  if (feed.provider === "aoe2war") return "AoE2DE War Wagers";
+  if (feed.provider === "aoe2war") return "AoE2WAR";
   if (feed.provider === "twitch") return "Twitch";
   if (feed.provider === "youtube") return "YouTube";
   if (feed.provider === "steam") return "Steam";
@@ -2498,7 +2498,7 @@ function buildBroadcastEmbedSrc(
   const autoplay = Boolean(options.autoplay);
 
   if (feed.provider === "twitch") {
-    const parent = encodeURIComponent(browserHost || "aoe2dewarwagers.com");
+    const parent = encodeURIComponent(browserHost || "aoe2war.com");
     return `https://player.twitch.tv/?channel=${encodeURIComponent(
       feed.embedId
     )}&parent=${parent}&autoplay=${autoplay ? "true" : "false"}&muted=${
@@ -2571,7 +2571,7 @@ function BroadcastHeroTile({
 }) {
   const [selectedView, setSelectedView] = useState<BroadcastViewKey>("god");
   const [playingView, setPlayingView] = useState<BroadcastViewKey | null>(null);
-  const [browserHost, setBrowserHost] = useState("aoe2dewarwagers.com");
+  const [browserHost, setBrowserHost] = useState("aoe2war.com");
   const leftPreviewUrl =
     previews.left || (sameBroadcastSource(feeds.left, feeds.god) ? previews.god : null);
   const rightPreviewUrl =
@@ -2609,16 +2609,16 @@ function BroadcastHeroTile({
   const defaultView = useMemo(
     () =>
       views.find(broadcastViewHasNativePlayback) ||
-      (broadcastViewHasSource(views[1]) ? views[1] : null) ||
+      views[1] ||
       views.find(broadcastViewHasSource) ||
-      views[1],
+      views[0],
     [views]
   );
   const activeView = views.find((view) => view.key === selectedView) || defaultView;
-  const activeViewHasEmbeddableFeed = Boolean(activeView.feed?.canEmbed && activeView.feed.embedId);
+  const activeViewShouldAutoplay = broadcastViewHasNativePlayback(activeView);
 
   useEffect(() => {
-    setBrowserHost(window.location.hostname || "aoe2dewarwagers.com");
+    setBrowserHost(window.location.hostname || "aoe2war.com");
   }, []);
 
   useEffect(() => {
@@ -2685,7 +2685,7 @@ function BroadcastHeroTile({
             previewUrl={activeView.previewUrl}
             browserHost={browserHost}
             marketTitle={marketTitle}
-            isPlaying={activeViewHasEmbeddableFeed || playingView === activeView.key}
+            isPlaying={activeViewShouldAutoplay || playingView === activeView.key}
             onPlay={() => setPlayingView(activeView.key)}
             layoutToggle={null}
           />
@@ -2700,7 +2700,7 @@ function BroadcastHeroTile({
             previewUrl={activeView.previewUrl}
             browserHost={browserHost}
             marketTitle={marketTitle}
-            isPlaying={activeViewHasEmbeddableFeed || playingView === activeView.key}
+            isPlaying={activeViewShouldAutoplay || playingView === activeView.key}
             onPlay={() => setPlayingView(activeView.key)}
             layoutToggle={null}
           />
@@ -2755,7 +2755,7 @@ function BroadcastPreviewButton({
           : "border-white/[0.06] bg-white/[0.035] hover:border-white/14 hover:bg-white/[0.055]"
       }`}
     >
-      <div className="aspect-video overflow-hidden rounded-[0.85rem] border border-white/[0.06] bg-slate-950/80 sm:rounded-[0.95rem]">
+      <div className="relative aspect-video overflow-hidden rounded-[0.85rem] border border-white/[0.06] bg-slate-950/80 sm:rounded-[0.95rem]">
         <BroadcastSignalSurface
           tone={tone}
           feed={feed}
@@ -2798,7 +2798,7 @@ function BroadcastCompactFrame({
 }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-[1.35rem] border border-white/[0.08] bg-slate-950/70 p-2">
-      <div className="aspect-video max-h-[18rem] min-h-[9rem] overflow-hidden rounded-[1.1rem] border border-white/[0.06] bg-black/55 sm:min-h-[11rem]">
+      <div className="relative aspect-video max-h-[18rem] min-h-[9rem] overflow-hidden rounded-[1.1rem] border border-white/[0.06] bg-black/55 sm:min-h-[11rem]">
         <BroadcastSignalSurface
           tone={tone}
           feed={feed}
@@ -2851,7 +2851,7 @@ function BroadcastPlaceholderFrame({
 }) {
   return (
     <div className="mt-4 overflow-hidden rounded-[1.45rem] border border-white/[0.08] bg-slate-950/78 p-2.5 sm:p-3">
-      <div className="aspect-video min-h-[12rem] overflow-hidden rounded-[1.2rem] border border-white/[0.06] bg-black/55 sm:min-h-[15rem]">
+      <div className="relative aspect-video min-h-[12rem] overflow-hidden rounded-[1.2rem] border border-white/[0.06] bg-black/55 sm:min-h-[15rem]">
         <BroadcastSignalSurface
           tone={tone}
           feed={feed}
@@ -2912,7 +2912,7 @@ function BroadcastSignalSurface({
   const [loopReady, setLoopReady] = useState(false);
   const [loopFailed, setLoopFailed] = useState(false);
   const embedSrc = isPlaying
-    ? buildBroadcastEmbedSrc(feed, browserHost || "aoe2dewarwagers.com", {
+    ? buildBroadcastEmbedSrc(feed, browserHost || "aoe2war.com", {
         compact,
         autoplay: true,
       })
@@ -2942,7 +2942,7 @@ function BroadcastSignalSurface({
       : feed.playbackUrl;
 
     return (
-      <div className="absolute inset-0 flex h-full min-h-0 items-center justify-center overflow-hidden rounded-none border-0 bg-black shadow-none">
+      <div className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden rounded-none border-0 bg-black shadow-none">
         {nativePlaybackUrl ? (
           <video
             key={`${feed.id || feed.playbackUrl || "native"}-${feed.latestChunkSeq ?? "live"}`}
@@ -2961,7 +2961,7 @@ function BroadcastSignalSurface({
             title={feed.title || feed.label}
             compact={compact}
             fallbackLabel="Live"
-            className="absolute inset-0 h-full min-h-0 rounded-none border-0 shadow-none"
+            className="h-full w-full min-h-0 rounded-none border-0 shadow-none"
           />
         )}
       </div>

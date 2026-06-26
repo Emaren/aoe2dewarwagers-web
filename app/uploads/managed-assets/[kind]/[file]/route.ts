@@ -18,32 +18,52 @@ function contentTypeFor(filename: string) {
   return "application/octet-stream";
 }
 
+function uploadRoots() {
+  const configured = String(process.env.MANAGED_MEDIA_UPLOAD_DIR || "").trim();
+
+  return [
+    configured || null,
+    path.join(process.cwd(), "public", "uploads", "managed-assets"),
+  ].filter(Boolean) as string[];
+}
+
+function safeFilePath(baseDir: string, kind: string, file: string) {
+  const filePath = path.join(baseDir, kind, file);
+  const relativePath = path.relative(baseDir, filePath);
+
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return null;
+  }
+
+  return filePath;
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ kind: string; file: string }> }
 ) {
   const { kind, file } = await params;
+
   if (!SAFE_KIND_PATTERN.test(kind) || !SAFE_FILE_PATTERN.test(file)) {
     return new NextResponse("Not found", { status: 404 });
   }
 
-  const baseDir = path.join(process.cwd(), "public", "uploads", "managed-assets");
-  const filePath = path.join(baseDir, kind, file);
-  const relativePath = path.relative(baseDir, filePath);
+  for (const baseDir of uploadRoots()) {
+    const filePath = safeFilePath(baseDir, kind, file);
+    if (!filePath) continue;
 
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    return new NextResponse("Not found", { status: 404 });
+    try {
+      const buffer = await readFile(filePath);
+      return new NextResponse(new Uint8Array(buffer), {
+        headers: {
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "Content-Type": contentTypeFor(file),
+        },
+      });
+    } catch {
+      // Try next root.
+    }
   }
 
-  try {
-    const buffer = await readFile(filePath);
-    return new NextResponse(new Uint8Array(buffer), {
-      headers: {
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "Content-Type": contentTypeFor(file),
-      },
-    });
-  } catch {
-    return new NextResponse("Not found", { status: 404 });
-  }
+  return new NextResponse("Not found", { status: 404 });
 }

@@ -17,7 +17,7 @@ import { kingdomChronicles, kingdomStats, type KingdomChronicle } from "@/lib/ao
 
 export const metadata: Metadata = {
   title: "The Kingdom",
-  description: "The founding chronicle and on-chain story of AoE2DE War Wagers.",
+  description: "The founding chronicle and on-chain story of AoE2WAR.",
 };
 
 const ages = [
@@ -204,7 +204,7 @@ export default function KingdomPage() {
         <div className="space-y-5">
           <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/20 bg-amber-300/10 px-3 py-1 text-xs uppercase tracking-[0.24em] text-amber-100">
             <Crown className="h-4 w-4" />
-            AoE2DE War Wagers
+            AoE2WAR
           </div>
           <div>
             <h1 className="font-serif text-5xl font-semibold uppercase tracking-[0.08em] text-amber-50 sm:text-7xl">
@@ -283,7 +283,7 @@ export default function KingdomPage() {
               About
             </div>
             <p className="mt-4 text-sm leading-6 text-slate-300">
-              This is the on-chain history of AoE2DE War Wagers. Every Chronicle is a major event in the
+              This is the on-chain history of AoE2WAR. Every Chronicle is a major event in the
               kingdom. Every Bounty is a reward for those who build it.
             </p>
           </div>

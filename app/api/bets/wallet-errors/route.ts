@@ -49,7 +49,7 @@ function classifyBetWalletIssue(rawError: string) {
 function describeBetWalletIssue(rawError: string) {
   switch (classifyBetWalletIssue(rawError)) {
     case "keplr_unavailable":
-      return "Keplr is not available in this browser. No bet was placed and no WOLO moved. Open AoE2DE War Wagers in the Chrome profile where Keplr is installed, enable Keplr for aoe2dewarwagers.com, then try again.";
+      return "Keplr is not available in this browser. No bet was placed and no WOLO moved. Open AoE2WAR in the Chrome profile where Keplr is installed, enable Keplr for aoe2war.com, then try again.";
     case "insufficient_mainnet_balance":
       return "Not enough mainnet WOLO is available in this wallet for that bet. No bet was placed and no WOLO moved.";
     case "wallet_rejected":

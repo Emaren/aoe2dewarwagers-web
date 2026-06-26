@@ -28,7 +28,7 @@ import {
 
 export const metadata: Metadata = {
   title: "Forum",
-  description: "AoE2DE War Wagers War Room forum shell for champions, bounties, strategy, and community posts.",
+  description: "AoE2WAR War Room forum shell for champions, bounties, strategy, and community posts.",
 };
 
 const tabs = ["War Room", "Match Discussions", "Strategy & Guides", "Replays & Analysis", "General", "Off-Topic"];
@@ -116,7 +116,7 @@ function FeaturedThread({
 }
 
 function RecentPost({ title, index }: { title: string; index: number }) {
-  const author = ["TheViperFan", "AoE2Caster", "NoobQuestion", "TeamBoom", "OldSchoolHD", "CastleEnjoyer", "AoE2DE War Wagers Official", "ComebackKing"][index] || "War Room";
+  const author = ["TheViperFan", "AoE2Caster", "NoobQuestion", "TeamBoom", "OldSchoolHD", "CastleEnjoyer", "AoE2WAR Official", "ComebackKing"][index] || "War Room";
   return (
     <article className="rounded-[1.1rem] border border-white/8 bg-white/[0.025] px-4 py-3 transition hover:border-white/16 hover:bg-white/[0.045]">
       <div className="flex items-center gap-3">
@@ -192,7 +192,7 @@ export default function ForumPage() {
             <div className="relative z-10 mx-auto max-w-4xl">
               <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.34em] text-amber-100/74">
                 <Crown className="h-4 w-4" />
-                AoE2DE War Wagers
+                AoE2WAR
               </div>
               <h1 className="mt-3 font-serif text-5xl font-semibold uppercase tracking-[0.12em] text-amber-50 sm:text-7xl">
                 Forum
@@ -354,7 +354,7 @@ export default function ForumPage() {
           [BookOpen, "Post Synopsis", "Earn up to 1000 WOLO"],
           [Radio, "Spectate & Earn", "Watch games, earn WOLO"],
           [Vote, "Create Poll", "Ask the community"],
-          [ShieldAlert, "Report", "Keep AoE2DE War Wagers clean"],
+          [ShieldAlert, "Report", "Keep AoE2WAR clean"],
         ].map(([Icon, title, body]) => (
           <Link
             key={String(title)}

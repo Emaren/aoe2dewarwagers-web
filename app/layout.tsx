@@ -6,7 +6,7 @@ import AppShell from "./AppShell";
 import PwaRegister from "@/components/pwa/PwaRegister";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://aoe2dewarwagers.com"),
+  metadataBase: new URL("https://aoe2war.com"),
   applicationName: "AoE2DEWarWagers",
   title: {
     default: "AoE2DEWarWagers",
@@ -33,7 +33,7 @@ export const metadata: Metadata = {
     title: "AoE2DEWarWagers",
     description:
       "Tournament lobby, replay proof, rivalry pages, and live chat for AoE2DE players.",
-    url: "https://aoe2dewarwagers.com",
+    url: "https://aoe2war.com",
     siteName: "AoE2DEWarWagers",
     type: "website",
     images: [
@@ -88,7 +88,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       >
         <Script
           defer
-          data-domain="aoe2dewarwagers.com"
+          data-domain="aoe2war.com"
           src="https://plausible.io/js/script.js"
         />
         <Script

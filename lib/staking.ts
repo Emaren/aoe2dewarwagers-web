@@ -40,7 +40,7 @@ export type StakingPeriodKey = "24h" | "7d" | "30d" | "all";
 export type StakingBoardKey = "stakers" | "earners" | "rewards";
 export type StakingActionType = "STAKE" | "UNSTAKE" | "CLAIM" | "ADJUSTMENT";
 export type StakingActivityMode = "ledger" | "grouped";
-export type StakingActivityFilter = "all" | "staking" | "bets" | "transfers";
+export type StakingActivityFilter = "all" | "staking" | "compounded" | "bounties" | "bets" | "transfers";
 
 export type StakingActivityItem = {
   key?: string;
@@ -612,18 +612,20 @@ function giftToActivityItem(
   const timestampLabel = formatMoment(safeTimestamp);
   const player = displayPlayerName(row.user);
   const amountLabel = row.amount != null ? formatActivityWolo(row.amount) : undefined;
-  const statusLabel = row.status === "accepted" ? "Accepted app gift" : "Claimable app gift";
+  const isBounty = (row.note || "").toLowerCase().includes("bounty");
+  const statusLabel = row.status === "accepted" ? "Accepted" : isBounty ? "Unclaimed" : "Claimable";
+  const noun = isBounty ? "bounty" : "gift";
 
   return {
     key: `gift-${row.id}`,
-    label: `${amountLabel ?? row.kind} gift: ${player}`,
+    label: `${amountLabel ?? row.kind} ${noun}: ${player}`,
     detail: [statusLabel, row.note?.trim() || null].filter(Boolean).join(" · "),
     meta: timestampLabel,
-    eventType: "GIFT",
+    eventType: isBounty ? "BOUNTY" : "GIFT",
     amountLabel,
     timestampLabel,
     occurredAt: safeTimestamp.toISOString(),
-    tone: row.status === "accepted" ? "emerald" : "sky",
+    tone: row.status === "accepted" ? "emerald" : isBounty ? "amber" : "sky",
     sortAt: safeTimestamp,
   };
 }
@@ -1164,7 +1166,7 @@ export async function loadMainnetTransferStakingActivityPage(
   const before = options.before ?? null;
   const mode: StakingActivityMode = options.mode === "grouped" ? "grouped" : "ledger";
   const filter: StakingActivityFilter =
-    options.filter === "staking" || options.filter === "bets" || options.filter === "transfers"
+    options.filter === "staking" || options.filter === "compounded" || options.filter === "bounties" || options.filter === "bets" || options.filter === "transfers"
       ? options.filter
       : "all";
   const rawActivityTake =
@@ -1180,7 +1182,7 @@ export async function loadMainnetTransferStakingActivityPage(
   const validBeforeDate = beforeDate && !Number.isNaN(beforeDate.getTime()) ? beforeDate : null;
 
   const mainnetDisplayStartAt = getWoloMainnetDisplayStartAt();
-  const includeStakingLedgerRows = filter === "all" || filter === "staking";
+  const includeStakingLedgerRows = filter === "all" || filter === "staking" || filter === "compounded";
 
   const [indexedTransferRows, giftRows, mainnetActivityRows, pendingSettlementRows, stakingCycleRows, stakingAllocationRows] = await Promise.all([
     loadIndexedWoloTransferActivityRows(prisma, rawActivityTake, { before }).catch(() => []),
@@ -1324,17 +1326,20 @@ export async function loadMainnetTransferStakingActivityPage(
           ? BigInt(Math.max(0, Math.round(Number(distribution.stakerPoolWolo || 0) * 1_000_000)))
           : BigInt(String(rawStakerPoolUwolo));
 
-      const amountLabel =
+      const storedDustWolo =
         stakerPoolUwolo > BigInt(0)
-          ? stakerPoolUwolo < BigInt(1_000_000)
-            ? "<1 WOLO"
-            : formatActivityWoloAmount(Number(stakerPoolUwolo / BigInt(1_000_000)))
-          : "0 WOLO";
+          ? Number(stakerPoolUwolo) / 1_000_000
+          : Number(distribution.stakerPoolWolo || 0);
+
+      const modeledDustWolo = settledVolumeWolo > 0 ? settledVolumeWolo * 0.01 : 0;
+      const dustWolo = Math.max(storedDustWolo, modeledDustWolo);
+      const dustLabel = dustWolo > 0 ? formatActivityWoloAmount(dustWolo) : "0 WOLO";
+      const amountLabel = dustWolo > 0 ? dustLabel : "No pool";
 
       const distributionDetail =
-        stakerPoolUwolo > BigInt(0)
-          ? `${amountLabel} staking pool · below 1 WOLO payout threshold · ${settledLabel} · ${volumeLabel}`
-          : `No reward distribution · ${settledLabel} · ${volumeLabel}`;
+        dustWolo > 0
+          ? `Current dust: ${dustLabel} · below 1 WOLO payout threshold · no payout this cycle · ${settledLabel} · ${volumeLabel}`
+          : `Current dust: 0 WOLO · no payout this cycle · ${settledLabel} · ${volumeLabel}`;
 
       return {
         key: `staking-cycle-${distribution.id}`,
@@ -1366,29 +1371,35 @@ export async function loadMainnetTransferStakingActivityPage(
       const player = allocation.player || `User #${allocation.user_id}`;
 
       const rewardUwolo = BigInt(String(allocation.reward_uwolo || 0));
-      const wholeWolo = rewardUwolo / BigInt(1_000_000);
       const rewardWoloDecimal = Number(rewardUwolo) / 1_000_000;
 
+      const fallbackRewardWolo = Number.parseFloat(String(allocation.reward_wolo ?? "0"));
+      const displayRewardWolo =
+        rewardUwolo > BigInt(0)
+          ? rewardWoloDecimal
+          : Number.isFinite(fallbackRewardWolo)
+            ? fallbackRewardWolo
+            : 0;
       const amountLabel =
-        rewardUwolo > BigInt(0) && rewardUwolo < BigInt(1_000_000)
-          ? `${rewardWoloDecimal.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")} WOLO`
-          : formatActivityWoloAmount(Number(wholeWolo));
+        displayRewardWolo > 0 && displayRewardWolo < 1
+          ? `${displayRewardWolo.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")} WOLO`
+          : formatActivityWoloAmount(displayRewardWolo);
 
       const status = String(allocation.status || "REWARD").toUpperCase();
-      const isMicro = rewardUwolo > BigInt(0) && rewardUwolo < BigInt(1_000_000);
+      const isMicro = displayRewardWolo > 0 && displayRewardWolo < 1;
       const isCompounded = status === "COMPOUNDED";
 
       return {
         key: `staking-allocation-${allocation.id}`,
         label: isMicro
-          ? `${amountLabel} staking reward held: ${player}`
+          ? `${amountLabel} staking reward held in carry: ${player}`
           : isCompounded
-            ? `${amountLabel} reward compounded: ${player}`
+            ? `${amountLabel} auto-compounded reward: ${player}`
             : `${amountLabel} staking reward payout: ${player}`,
         detail: isMicro
-          ? `${player} · micro reward accrued · pending 1 WOLO payout threshold · Distribution ${distributionDate}`
+          ? `${player} · precise micro reward accrued · held in staking carry · Distribution ${distributionDate}`
           : isCompounded
-            ? `${player} · compounded reward allocation · matching tx rows are folded into this receipt · Distribution ${distributionDate}`
+            ? `${player} · rolled into staking principal · canonical compounded receipt · Distribution ${distributionDate}`
             : `${player} · ${status.toLowerCase()} reward allocation · Distribution ${distributionDate}`,
         meta: formatMoment(createdAt),
         eventType: "REWARD",
@@ -1440,6 +1451,31 @@ export async function loadMainnetTransferStakingActivityPage(
   const filteredCombined = combined.filter((item) => {
     const eventType = String(item.eventType || "").toUpperCase();
     const text = `${item.label || ""} ${item.detail || ""}`.toLowerCase();
+
+    if (filter === "bounties") {
+      return text.includes("bounty #") || text.includes("🏰 bounty");
+    }
+
+    if (filter === "compounded") {
+      return (
+        eventType === "COMPOUND" ||
+        text.includes("auto-compounded") ||
+        text.includes("reward compounded") ||
+        text.includes("compounded reward") ||
+        text.includes("rolled into staking principal") ||
+        text.includes("staking reward held in carry") ||
+        text.includes("held micro reward") ||
+        text.includes("precise micro reward accrued") ||
+        text.includes("micro_accrued") ||
+        text.includes("payout threshold") ||
+        text.includes("staking reward payout") ||
+        text.includes("reward payout") ||
+        text.includes("claimed reward") ||
+        text.includes("canonical claimed") ||
+        text.includes("paid out") ||
+        text.includes("compound-")
+      );
+    }
 
     if (filter === "staking") {
       return (
@@ -1505,7 +1541,7 @@ export async function loadMainnetTransferStakingActivityPage(
   });
 
   const visibleRows =
-    mode === "grouped" && filter !== "staking"
+    mode === "grouped" && filter !== "staking" && filter !== "compounded"
       ? groupStakingBetActivityItems(filteredCombined, limit + 1)
       : filteredCombined;
 
@@ -2013,7 +2049,22 @@ export async function createConfirmedStakingEvent(
     where: { txHash: normalizedTxHash },
   });
   if (existing) {
-    return existing;
+    const sameUser = existing.userId === input.userId;
+    const sameType = existing.type === input.type;
+    const sameAmount = existing.amountWolo === input.amountWolo;
+    const sameWallet =
+      !input.walletAddress ||
+      !existing.walletAddress ||
+      existing.walletAddress.toLowerCase() === input.walletAddress.toLowerCase();
+
+    if (sameUser && sameType && sameAmount && sameWallet) {
+      return existing;
+    }
+
+    throw new StakingActionError(
+      "That transaction hash is already attached to a different staking record.",
+      409
+    );
   }
 
   return prisma.$transaction(async (tx) => {
@@ -2193,7 +2244,7 @@ export async function calculateDailyStakingRewardDistribution(
             metadata: {
               settledBets: settledAggregate._count._all,
               settledVolumeWolo,
-              unit: "whole_wolo",
+              unit: "uwolo",
             },
           },
         })
@@ -2212,49 +2263,37 @@ export async function calculateDailyStakingRewardDistribution(
             metadata: {
               settledBets: settledAggregate._count._all,
               settledVolumeWolo,
-              unit: "whole_wolo",
+              unit: "uwolo",
             },
           },
         });
 
       if (totalWeight > BigInt(0) && feePools.stakerPoolWolo > 0) {
+        const microFactor = BigInt(1_000_000);
+        const stakerPoolUwolo = BigInt(feePools.stakerPoolWolo) * microFactor;
+
         const rewardPlans = weightedPositions
           .filter((position) => position.userWeight > BigInt(0))
           .map((position, originalIndex) => {
-            const numerator = BigInt(feePools.stakerPoolWolo) * position.userWeight;
+          const rewardUwolo = (stakerPoolUwolo * position.userWeight) / totalWeight;
+          const rewardWolo = Number(rewardUwolo / microFactor);
+          const rewardCarryUwolo = rewardUwolo % microFactor;
 
-            return {
-              ...position,
-              rewardWolo: Number(numerator / totalWeight),
-              rewardRemainder: numerator % totalWeight,
-              originalIndex,
-            };
-          });
-
-        let unallocatedRewardWolo =
-          feePools.stakerPoolWolo -
-          rewardPlans.reduce((sum, position) => sum + position.rewardWolo, 0);
-
-        for (const position of [...rewardPlans].sort((left, right) => {
-          if (left.rewardRemainder !== right.rewardRemainder) {
-            return left.rewardRemainder > right.rewardRemainder ? -1 : 1;
-          }
-
-          if (left.userWeight !== right.userWeight) {
-            return left.userWeight > right.userWeight ? -1 : 1;
-          }
-
-          return left.userId - right.userId;
-        })) {
-          if (unallocatedRewardWolo <= 0) break;
-
-          position.rewardWolo += 1;
-          unallocatedRewardWolo -= 1;
-        }
+          return {
+            ...position,
+            rewardUwolo,
+            rewardWolo,
+            rewardCarryUwolo,
+            originalIndex,
+          };
+        });
 
         for (const position of rewardPlans.sort((left, right) => left.originalIndex - right.originalIndex)) {
+          const rewardUwolo = position.rewardUwolo;
           const rewardWolo = position.rewardWolo;
-          if (rewardWolo <= 0) continue;
+          const rewardCarryUwolo = position.rewardCarryUwolo;
+
+          if (rewardUwolo <= BigInt(0)) continue;
 
           const preference = await tx.stakingPosition.findUnique({
             where: { userId: position.userId },
@@ -2272,12 +2311,26 @@ export async function calculateDailyStakingRewardDistribution(
               userWeight: position.userWeight,
               totalWeight,
               rewardWolo,
-              status: shouldCompound ? "COMPOUNDED" : "CREDITED",
+              status: rewardWolo > 0 ? (shouldCompound ? "COMPOUNDED" : "CREDITED") : "MICRO_ACCRUED",
               creditedAt,
             },
           });
 
-          if (shouldCompound) {
+          await tx.$executeRawUnsafe(
+            "update staking_reward_allocations set reward_uwolo = $1::bigint where id = $2",
+            rewardUwolo.toString(),
+            allocation.id
+          );
+
+          if (rewardCarryUwolo > BigInt(0)) {
+            await tx.$executeRawUnsafe(
+              "update staking_positions set micro_reward_carry_uwolo = coalesce(micro_reward_carry_uwolo, 0) + $1::bigint, updated_at = now() where user_id = $2",
+              rewardCarryUwolo.toString(),
+              position.userId
+            );
+          }
+
+          if (shouldCompound && rewardWolo > 0) {
             const balanceBefore = position.currentStakedWolo;
             const balanceAfter = balanceBefore + rewardWolo;
             const compoundTxHash = `COMPOUND-${distribution.id}-${position.userId}`;

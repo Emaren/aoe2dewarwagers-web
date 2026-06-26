@@ -18,10 +18,10 @@ import { useWoloBalance } from "@/hooks/useWoloBalance";
 
 const KEPLR_DOWNLOAD_URL = "https://www.keplr.app/get";
 const HERO_VIEW_KEY = "wolo-hero-view";
-const WOLO_EXPLORER_BASE_URL = "https://aoe2dewarwagers.com";
+const WOLO_EXPLORER_BASE_URL = "https://aoe2war.com";
 const OSMOSIS_POOL_ID = "3461";
 const OSMOSIS_POOL_URL = `https://app.osmosis.zone/pool/${OSMOSIS_POOL_ID}`;
-const WOLO_EMBLEM_SRC = "/legacy/wolo-logo-transparent.png";
+const WOLO_EMBLEM_SRC = "/legacy/wolo-logo-transparent.webp";
 const WOLO_LAUNCH_PRICE = "$0.0001";
 const WOLO_LAUNCH_PAIR = "WOLO/USDC";
 const WOLO_INITIAL_LIQUIDITY = "200,000 WOLO / 20 USDC";
@@ -810,7 +810,7 @@ function WoloLaunchBanner() {
           </div>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
             Launch price: {WOLO_LAUNCH_PRICE}. Trade {WOLO_LAUNCH_PAIR} on Pool #
-            {OSMOSIS_POOL_ID}. 100M fixed supply. Built for AoE2DE War Wagers.
+            {OSMOSIS_POOL_ID}. 100M fixed supply. Built for AoE2WAR.
           </p>
         </div>
 

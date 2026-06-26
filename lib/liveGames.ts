@@ -17,6 +17,8 @@ type StreamedLiveGameSession = LiveGameSession & {
 const BROWSER_STREAM_STALE_MS = 120_000;
 const BROWSER_STREAM_ARCHIVE_MS = 6 * 60 * 60 * 1000;
 const EXTERNAL_STREAM_STALE_MS = 20 * 60 * 1000;
+const LIVE_GAMES_RECENT_MATCH_LIMIT = 24;
+const LIVE_GAMES_RECENT_OUTCOME_LIMIT = 5;
 
 export type LiveGamesSummary = {
   liveCount: number;
@@ -46,14 +48,14 @@ async function loadRecentMatches(): Promise<LobbyMatchRow[]> {
     if (!response.ok) return [];
 
     const payload = (await response.json()) as LobbyMatchRow[] | unknown;
-    return Array.isArray(payload) ? payload.slice(0, 240) : [];
+    return Array.isArray(payload) ? payload.slice(0, LIVE_GAMES_RECENT_MATCH_LIMIT) : [];
   } catch (error) {
     console.warn("Failed to load recent matches for live games:", error);
     return [];
   }
 }
 
-export async function loadLiveGamesSnapshot(prisma: PrismaClient): Promise<LiveGamesSnapshot> {
+async function loadLiveGamesSnapshotFresh(prisma: PrismaClient): Promise<LiveGamesSnapshot> {
   const [tournament, recentMatches, sessionSnapshot] = await Promise.all([
     getFeaturedTournament(prisma),
     loadRecentMatches(),
@@ -93,14 +95,14 @@ export async function loadLiveGamesSnapshot(prisma: PrismaClient): Promise<LiveG
   ]);
   const filteredRecentMatches = recentMatches
     .filter((match) => !recentlyCompletedKeys.has(normalizeSessionKey(match)))
-    .slice(0, 240);
+    .slice(0, LIVE_GAMES_RECENT_MATCH_LIMIT);
 
-  const fallbackRecentOutcomeMatch = filteredRecentMatches[0] ?? null;
+  const fallbackRecentOutcomeMatches = filteredRecentMatches.slice(0, LIVE_GAMES_RECENT_OUTCOME_LIMIT);
 
   const sessionKeys = [
     ...filteredActiveSessions.flatMap(sessionStreamKeys),
     ...filteredCompletedSessions.flatMap(sessionStreamKeys),
-    ...(fallbackRecentOutcomeMatch ? recentMatchStreamKeys(fallbackRecentOutcomeMatch) : []),
+    ...fallbackRecentOutcomeMatches.flatMap(recentMatchStreamKeys),
   ];
   const streamsBySession = await loadStreamsBySession(prisma, sessionKeys);
   const streamedActiveSessionBase = attachStreams(filteredActiveSessions, streamsBySession);
@@ -133,13 +135,14 @@ export async function loadLiveGamesSnapshot(prisma: PrismaClient): Promise<LiveG
     (session) => !sessionHasLiveNativeStream(session) && !activeSessionKeys.has(session.sessionKey)
   );
 
-  const fallbackRecentOutcomeSessions =
-    streamedCompletedSessions.length === 0 && fallbackRecentOutcomeMatch
-      ? compactNullable([buildRecentOutcomeSession(fallbackRecentOutcomeMatch, streamsBySession)])
-      : [];
+  const fallbackRecentOutcomeSessions = compactNullable(
+    fallbackRecentOutcomeMatches.map((match) => buildRecentOutcomeSession(match, streamsBySession))
+  );
 
-  const displayedCompletedSessions =
-    streamedCompletedSessions.length > 0 ? streamedCompletedSessions : fallbackRecentOutcomeSessions;
+  const displayedCompletedSessions = dedupeStreamedSessions([
+    ...streamedCompletedSessions,
+    ...fallbackRecentOutcomeSessions,
+  ]).slice(0, LIVE_GAMES_RECENT_OUTCOME_LIMIT);
 
   const displayedCompletedKeys = new Set(
     displayedCompletedSessions.map((session) => session.sessionKey)
@@ -592,4 +595,60 @@ function attachStreams(
       primaryStream,
     };
   });
+}
+type LiveGamesSnapshotCacheEntry = {
+  expiresAt: number;
+  staleUntil: number;
+  refreshing: boolean;
+  value: LiveGamesSnapshot;
+};
+
+const LIVE_GAMES_SNAPSHOT_CACHE_TTL_MS = 8000;
+const LIVE_GAMES_SNAPSHOT_STALE_TTL_MS = 10 * 60 * 1000;
+let liveGamesSnapshotCache: LiveGamesSnapshotCacheEntry | null = null;
+
+export async function loadLiveGamesSnapshot(prisma: PrismaClient): Promise<LiveGamesSnapshot> {
+  const now = Date.now();
+
+  if (liveGamesSnapshotCache && liveGamesSnapshotCache.expiresAt > now) {
+    return liveGamesSnapshotCache.value;
+  }
+
+  if (liveGamesSnapshotCache && liveGamesSnapshotCache.staleUntil > now) {
+    if (!liveGamesSnapshotCache.refreshing) {
+      liveGamesSnapshotCache.refreshing = true;
+
+      void loadLiveGamesSnapshotFresh(prisma)
+        .then((value) => {
+          const refreshedAt = Date.now();
+
+          liveGamesSnapshotCache = {
+            expiresAt: refreshedAt + LIVE_GAMES_SNAPSHOT_CACHE_TTL_MS,
+            staleUntil: refreshedAt + LIVE_GAMES_SNAPSHOT_STALE_TTL_MS,
+            refreshing: false,
+            value,
+          };
+        })
+        .catch((error) => {
+          console.error("Failed to refresh live games snapshot cache:", error);
+
+          if (liveGamesSnapshotCache) {
+            liveGamesSnapshotCache.refreshing = false;
+          }
+        });
+    }
+
+    return liveGamesSnapshotCache.value;
+  }
+
+  const value = await loadLiveGamesSnapshotFresh(prisma);
+
+  liveGamesSnapshotCache = {
+    expiresAt: now + LIVE_GAMES_SNAPSHOT_CACHE_TTL_MS,
+    staleUntil: now + LIVE_GAMES_SNAPSHOT_STALE_TTL_MS,
+    refreshing: false,
+    value,
+  };
+
+  return value;
 }

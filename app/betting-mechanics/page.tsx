@@ -91,7 +91,7 @@ export default function BettingMechanicsPage() {
 
           <div className="flex items-center gap-4 rounded-[1.4rem] border border-amber-300/18 bg-slate-950/40 px-5 py-4">
             <Image
-              src="/legacy/wolo-logo-transparent.png"
+              src="/legacy/wolo-logo-transparent.webp"
               alt="WOLO"
               width={56}
               height={56}
@@ -157,6 +157,48 @@ export default function BettingMechanicsPage() {
           Bet Rail
         </Link>
       </div>
-    </main>
+
+        <section className="mt-6 rounded-[1.5rem] border border-white/10 bg-white/[0.035] p-4 sm:p-5">
+          <div className="text-[10px] uppercase tracking-[0.38em] text-amber-200/70">
+            AI Liquidity Rail
+          </div>
+
+          <div className="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+              <div className="text-sm font-black text-white">Tony or Phil opens.</div>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                Every streamed match can get a random 1 WOLO AI liquidity bet.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+              <div className="text-sm font-black text-white">One-sided action clears.</div>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                If a human bets one side, an AI bettor can take the other.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+              <div className="text-sm font-black text-white">Founder Bonus always fires.</div>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                4 WOLO for 1v1/2v2, 6 for 3v3, 8 for 4v4. Split precisely.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+              <div className="text-sm font-black text-white">Refunds are refunds.</div>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                Voids return stake and display as refunds, never fake wins.
+              </p>
+            </div>
+          </div>
+
+          <p className="mt-4 text-xs leading-5 text-slate-500">
+            Human-directed books come next: post your action, let another human take it,
+            or turn AI assistance off for pure player-vs-player betting.
+          </p>
+        </section>
+
+      </main>
   );
 }

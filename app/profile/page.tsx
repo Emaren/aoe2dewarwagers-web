@@ -88,11 +88,20 @@ type ProfileResponse = {
 type ProfileTitleHolding = {
   id: string;
   type: string;
+  kind: string;
+  family: string;
   displayName: string;
   shortName: string;
   dailyWolo: number;
+  bountyGrowthWolo: number;
+  currentBountyWolo: number;
   routeHref: string;
   assetUrl: string;
+  holderSince: string | null;
+  status: string;
+  chainStatus: string;
+  nftId: string | null;
+  eligibleNationality: string | null;
 };
 
 type WatcherKeyRow = {
@@ -651,8 +660,8 @@ function ProfilePageContent() {
   const latestWatcherKey = watcherKeys[0] ?? null;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 py-8 text-white">
-      <section className="rounded-[2rem] border border-white/10 bg-slate-950/70 p-6 sm:p-8">
+    <div className="mx-auto w-full min-w-0 max-w-5xl space-y-6 py-8 text-white">
+      <section className="min-w-0 overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 p-5 sm:p-8">
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] xl:items-start">
           <div className="min-w-0">
             <div className="text-xs uppercase tracking-[0.35em] text-white/45">Identity</div>
@@ -792,7 +801,7 @@ function ProfilePageContent() {
             <div className="mt-4 space-y-4">
               <BrowserStreamStudio
                 sessionKey={streamSessionKey || undefined}
-                title={streamTitle || (confirmedName ? `${confirmedName} live` : "AoE2DE War Wagers live")}
+                title={streamTitle || (confirmedName ? `${confirmedName} live` : "AoE2WAR live")}
                 playerLabel={confirmedName}
                 watcherIntent={watcherStreamIntent}
               />
@@ -1412,7 +1421,7 @@ function ProfileAvatarPanel({
   onPreset: (target: string) => void;
   onUpload: (file: File | null) => void;
 }) {
-  const avatarUrl = profile?.avatarUrl || "/champions/players/silhouette.png";
+  const avatarUrl = profile?.avatarUrl || "/champions/players/silhouette.webp";
   const options = profile?.avatarOptions ?? [];
 
   return (
@@ -1463,22 +1472,85 @@ function ProfileAvatarPanel({
 function ProfileTitleInventory({ profile }: { profile: ProfileResponse | null }) {
   const belts = profile?.belts ?? [];
   const artifacts = profile?.artifacts ?? [];
+  const featuredBelt = belts[0] ?? null;
 
   return (
-    <div className="mt-4 grid gap-3 lg:grid-cols-2">
-      <ProfileHoldingRail
-        icon={Crown}
-        title="Belts"
-        empty="No active belts yet."
-        holdings={belts}
-      />
-      <ProfileHoldingRail
-        icon={Gem}
-        title="Artifacts"
-        empty="No artifacts held yet."
-        holdings={artifacts}
-      />
+    <div className="mt-4 min-w-0 space-y-3">
+      {featuredBelt && profile ? (
+        <ProfileChampionShowcase holding={featuredBelt} avatarUrl={profile.avatarUrl} />
+      ) : null}
+      <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+        <ProfileHoldingRail
+          icon={Crown}
+          title="Belts"
+          empty={featuredBelt ? "Featured championship shown above." : "No active belts yet."}
+          holdings={featuredBelt ? belts.slice(1) : belts}
+        />
+        <ProfileHoldingRail
+          icon={Gem}
+          title="Artifacts"
+          empty="No artifacts held yet."
+          holdings={artifacts}
+        />
+      </div>
     </div>
+  );
+}
+
+function ProfileChampionShowcase({
+  holding,
+  avatarUrl,
+}: {
+  holding: ProfileTitleHolding;
+  avatarUrl: string;
+}) {
+  return (
+    <Link
+      href={holding.routeHref}
+      className="group relative block min-h-[25rem] overflow-hidden rounded-[1.7rem] border border-amber-200/18 bg-[radial-gradient(circle_at_50%_8%,rgba(251,191,36,0.16),transparent_28%),linear-gradient(145deg,rgba(21,16,10,0.96),rgba(4,10,19,0.98))] p-4 shadow-[0_28px_80px_rgba(0,0,0,0.34)] sm:min-h-[28rem]"
+    >
+      <div className="absolute inset-x-3 top-3 z-30 flex justify-center">
+        <div className="rounded-full border border-amber-100/28 bg-black/72 px-4 py-2 text-center shadow-[0_12px_36px_rgba(0,0,0,0.48)] backdrop-blur">
+          <div className="text-[8px] font-black uppercase tracking-[0.27em] text-amber-200/70">
+            Estimated dethrone reward
+          </div>
+          <div className="mt-0.5 text-lg font-black text-amber-50">
+            {holding.currentBountyWolo.toLocaleString()} WOLO
+          </div>
+          <div className="text-[9px] font-semibold uppercase tracking-[0.18em] text-amber-200/58">
+            +{holding.bountyGrowthWolo} WOLO/day
+          </div>
+        </div>
+      </div>
+
+      <div className="absolute inset-x-[18%] top-14 h-[17rem] sm:top-12 sm:h-[20rem]">
+        <img
+          src={avatarUrl}
+          alt=""
+          className="h-full w-full object-contain object-top opacity-95 drop-shadow-[0_20px_45px_rgba(0,0,0,0.72)] [mask-image:linear-gradient(180deg,black_0%,black_65%,transparent_100%)]"
+        />
+      </div>
+      <div className="absolute inset-x-[8%] bottom-[4.8rem] z-20 h-40 sm:h-48">
+        <img
+          src={holding.assetUrl}
+          alt={holding.displayName}
+          className="h-full w-full object-contain drop-shadow-[0_22px_44px_rgba(0,0,0,0.85)] transition duration-500 group-hover:scale-[1.025]"
+        />
+      </div>
+
+      <div className="absolute inset-x-4 bottom-4 z-30 flex items-end justify-between gap-3 rounded-2xl border border-amber-200/12 bg-black/62 p-3 backdrop-blur">
+        <div className="min-w-0">
+          <div className="truncate text-lg font-semibold text-white">{holding.displayName}</div>
+          <div className="mt-1 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.16em] text-slate-400">
+            <span>{holding.dailyWolo} WOLO/day tribute</span>
+            <span>{holding.chainStatus === "app_only" ? "App custody" : holding.chainStatus}</span>
+          </div>
+        </div>
+        <div className="shrink-0 rounded-full border border-amber-200/18 bg-amber-300/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-amber-100">
+          Champion
+        </div>
+      </div>
+    </Link>
   );
 }
 
@@ -1494,7 +1566,7 @@ function ProfileHoldingRail({
   holdings: ProfileTitleHolding[];
 }) {
   return (
-    <div className="rounded-[1.35rem] border border-white/10 bg-white/[0.035] p-4">
+    <div className="min-w-0 overflow-hidden rounded-[1.35rem] border border-white/10 bg-white/[0.035] p-4">
       <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-slate-500">
         <Icon className="h-4 w-4" />
         {title}
@@ -1516,16 +1588,16 @@ function ProfileHoldingCard({ holding }: { holding: ProfileTitleHolding }) {
   return (
     <Link
       href={holding.routeHref}
-      className="grid grid-cols-[4rem_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border border-amber-200/10 bg-black/18 px-3 py-2.5 transition hover:border-amber-200/28 hover:bg-amber-300/8"
+      className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-3 rounded-2xl border border-amber-200/10 bg-black/18 px-3 py-2.5 transition hover:border-amber-200/28 hover:bg-amber-300/8 sm:grid-cols-[4rem_minmax(0,1fr)_auto]"
     >
-      <span className="flex h-14 w-16 items-center justify-center overflow-hidden rounded-xl bg-black/20">
+      <span className="row-span-2 flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl bg-black/20 sm:row-span-1 sm:w-16">
         <img src={holding.assetUrl} alt="" className="max-h-full max-w-full object-contain" />
       </span>
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold text-white">{holding.shortName}</span>
         <span className="mt-0.5 block truncate text-xs text-slate-500">{holding.displayName}</span>
       </span>
-      <span className="rounded-full border border-amber-200/16 bg-amber-300/10 px-2.5 py-1 text-[11px] font-semibold text-amber-100">
+      <span className="col-start-2 justify-self-start rounded-full border border-amber-200/16 bg-amber-300/10 px-2.5 py-1 text-[11px] font-semibold text-amber-100 sm:col-start-3 sm:row-start-1 sm:justify-self-end">
         {holding.dailyWolo} WOLO/day
       </span>
     </Link>

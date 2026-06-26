@@ -65,8 +65,8 @@ export async function POST(request: NextRequest) {
 
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const requestedSessionKey = cleanText(body.sessionKey, 255);
-  const title = cleanText(body.title, 140) || "AoE2DE War Wagers live";
-  const label = cleanText(body.label, 80) || "AoE2DE War Wagers Live";
+  const title = cleanText(body.title, 140) || "AoE2WAR live";
+  const label = cleanText(body.label, 80) || "AoE2WAR Live";
   const playerLabel = cleanText(body.playerLabel, 80) || null;
   const thumbnailUrl = cleanText(body.thumbnailUrl, 200_000) || null;
   const mediaMimeType = cleanText(body.mediaMimeType, 120) || "video/webm";

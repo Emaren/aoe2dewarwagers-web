@@ -57,6 +57,22 @@ journalctl -u aoe2dewarwagers-web.service -n 40 --no-pager
 
 ## Recent deployment notes
 
+### 2026-06-25 HD parity refresh: trophies, events, Wolo, staking, and media
+
+- Mirrored the post-June-18 AoE2HDBets web feature surface into the DE site
+  while preserving DE branding, port `4000`, upstream API port `4400`, watcher
+  protocol/package names, and deployment path.
+- Added the War Trophy command system, public trophy metadata routes, tribute
+  queueing/execution surfaces, and `npm run trophy:tributes:queue`.
+- Added Event Studio admin pages/APIs, WoloChain live transparency tiles,
+  detailed bet book pages, staking ledger/activity polish, completed
+  watcher-live outcome surfacing, and optimized public image assets.
+- Deployment requires `npx prisma migrate deploy` before `npm run build` to
+  apply the trophy/event/media migrations dated `20260619`, `20260620`, and
+  `20260621`.
+- Keep watcher release artifacts DE-specific. Do not replace
+  `AoE2DEWarWagers` watcher files with HD watcher artifacts during sync.
+
 ### 2026-05-30 Advanced lobby arena and live ticker
 
 - Added `live_ticker_messages` for admin-managed text ticker messages.

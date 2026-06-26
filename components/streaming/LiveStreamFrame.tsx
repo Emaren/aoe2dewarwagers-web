@@ -33,7 +33,7 @@ const ROLLING_REFRESH_ADVANCE = 6;
 const ROLLING_COMPACT_REFRESH_ADVANCE = 5;
 
 function providerLabel(stream: WatchStreamPayload) {
-  if (stream.provider === "aoe2war") return "AoE2DE War Wagers";
+  if (stream.provider === "aoe2war") return "AoE2WAR";
   if (stream.provider === "twitch") return "Twitch";
   if (stream.provider === "youtube") return "YouTube";
   if (stream.provider === "steam") return "Steam";
@@ -45,7 +45,7 @@ function buildEmbedSrc(stream: WatchStreamPayload, browserHost: string) {
   if (!stream.embedId || !stream.canEmbed) return null;
 
   if (stream.provider === "twitch") {
-    const parent = encodeURIComponent(browserHost || "aoe2dewarwagers.com");
+    const parent = encodeURIComponent(browserHost || "aoe2war.com");
     return `https://player.twitch.tv/?channel=${encodeURIComponent(
       stream.embedId
     )}&parent=${parent}&autoplay=false&muted=false`;
@@ -67,7 +67,7 @@ export default function LiveStreamFrame({
   className = "",
   fallbackLabel = "Stream ready",
 }: Props) {
-  const [browserHost, setBrowserHost] = useState("aoe2dewarwagers.com");
+  const [browserHost, setBrowserHost] = useState("aoe2war.com");
   const isBrowserStream = stream?.provider === "aoe2war" || stream?.sourceType === "browser";
   const embedSrc = useMemo(
     () => (stream && !isBrowserStream ? buildEmbedSrc(stream, browserHost) : null),
@@ -75,7 +75,7 @@ export default function LiveStreamFrame({
   );
 
   useEffect(() => {
-    setBrowserHost(window.location.hostname || "aoe2dewarwagers.com");
+    setBrowserHost(window.location.hostname || "aoe2war.com");
   }, []);
 
   return (
@@ -366,7 +366,7 @@ function BrowserChunkPlayer({
       video.removeEventListener("error", handleVideoError);
       revokeCurrentObjectUrl();
     };
-  }, [compact, stream.id, stream.status]);
+  }, [compact, stream.id]);
 
   return (
     <>

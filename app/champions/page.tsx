@@ -40,7 +40,7 @@ import {
 
 export const metadata: Metadata = {
   title: "Championship Belts",
-  description: "AoE2DE War Wagers titles, championship belts, national reigns, and title economy.",
+  description: "AoE2WAR titles, championship belts, national reigns, and title economy.",
 };
 
 export const dynamic = "force-dynamic";
@@ -57,14 +57,21 @@ const toneClasses: Record<ChampionTone, string> = {
 };
 
 const PLAYER_BACKDROPS: Record<string, string> = {
-  emaren: "/champions/players/emaren.png",
-  jim: "/champions/players/jim.png",
-  "julio alvarez": "/champions/players/julio.png",
-  julio: "/champions/players/julio.png",
-  sniper: "/champions/players/sniper.png",
+  emaren: "/champions/players/emaren.webp",
+  jim: "/champions/players/jim.webp",
+  "julio alvarez": "/champions/players/julio.webp",
+  julio: "/champions/players/julio.webp",
+  sniper: "/champions/players/sniper.webp",
 };
 
-const SILHOUETTE_BACKDROP = "/champions/players/silhouette.png";
+const SILHOUETTE_BACKDROP = "/champions/players/silhouette.webp";
+const FEMALE_SILHOUETTE_BACKDROP = "/champions/players/female_silhouette.webp";
+
+function isWomensTitle(title: ChampionTitleDefinition) {
+  const id = title.id.toLowerCase();
+  const slug = title.slug.toLowerCase();
+  return id.includes("women") || slug.includes("women") || title.type === "womens";
+}
 
 function normalizedPlayerName(value: string) {
   return value.trim().toLowerCase();
@@ -83,6 +90,9 @@ function backdropForTitle(title: ChampionTitleDefinition) {
 
   if (title.id === "national-canada") {
     return managedMediaPublicUrl("avatar", "emaren", PLAYER_BACKDROPS.emaren);
+  }
+  if (isWomensTitle(title)) {
+    return managedMediaPublicUrl("avatar", "female-silhouette", FEMALE_SILHOUETTE_BACKDROP);
   }
   return managedMediaPublicUrl("avatar", "silhouette", SILHOUETTE_BACKDROP);
 }
@@ -155,6 +165,21 @@ function BeltAsset({
 
   return (
     <div className={`relative mx-auto w-full overflow-visible ${className}`}>
+      {typeof title.currentBountyWolo === "number" ? (
+        <div className="absolute inset-x-3 -top-3 z-[70] flex justify-center">
+          <div className="rounded-full border border-amber-100/35 bg-[linear-gradient(180deg,rgba(53,32,7,0.96),rgba(8,6,3,0.96))] px-4 py-2 text-center shadow-[0_14px_40px_rgba(0,0,0,0.58)] backdrop-blur">
+            <div className="text-[8px] font-black uppercase tracking-[0.28em] text-amber-200/72">
+              {title.guardianHeld ? "Open activation reward" : "Estimated dethrone reward"}
+            </div>
+            <div className="mt-0.5 text-sm font-black text-amber-50">
+              {title.currentBountyWolo.toLocaleString()} WOLO
+              <span className="ml-2 text-[10px] font-semibold text-amber-200/65">
+                +{title.bountyGrowthWolo ?? title.dailyWolo}/day
+              </span>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {characterUrl && wearable ? (
         <Image
           src={characterUrl}
@@ -215,6 +240,49 @@ function HolderLine({ title, dense = false }: { title: ChampionTitleDefinition; 
   );
 }
 
+function txProofHref(txHash: string) {
+  return `/api/wolo/tx/${encodeURIComponent(txHash)}`;
+}
+
+function shortTxHash(txHash: string) {
+  return `${txHash.slice(0, 8)}…${txHash.slice(-6)}`;
+}
+
+function formatShortDate(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString("en-CA", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function LastTributeProof({ title, compact = false }: { title: ChampionTitleDefinition; compact?: boolean }) {
+  if (!title.lastTributeTxHash) return null;
+
+  const amount = title.lastTributeAmountWolo ?? title.dailyWolo;
+  const paidAt = formatShortDate(title.lastTributePaidAt);
+
+  return (
+    <Link
+      href={txProofHref(title.lastTributeTxHash)}
+      className={`mt-2 block rounded-xl border border-emerald-300/15 bg-emerald-400/10 text-emerald-100 transition hover:border-emerald-200/35 hover:bg-emerald-400/15 ${
+        compact ? "px-2.5 py-2 text-[10px]" : "px-3 py-2 text-xs"
+      }`}
+    >
+      <span className="block uppercase tracking-[0.2em] text-emerald-100/65">Last tribute paid</span>
+      <span className="mt-0.5 block font-semibold">
+        {amount.toLocaleString()} WOLO{title.lastTributeRecipient ? ` → ${title.lastTributeRecipient}` : ""}
+      </span>
+      <span className="mt-0.5 block font-mono text-emerald-100/70">
+        tx {shortTxHash(title.lastTributeTxHash)}{paidAt ? ` · ${paidAt} UTC` : ""}
+      </span>
+    </Link>
+  );
+}
+
 function TributePill({ title, compact = false }: { title: ChampionTitleDefinition; compact?: boolean }) {
   return (
     <div
@@ -228,6 +296,7 @@ function TributePill({ title, compact = false }: { title: ChampionTitleDefinitio
       <div className="mt-1 text-sm font-semibold text-amber-50">
         {title.type === "tag_team" ? `${title.dailyWolo} WOLO/day each` : `${title.dailyWolo} WOLO/day`}
       </div>
+      <LastTributeProof title={title} compact={compact} />
     </div>
   );
 }
@@ -391,95 +460,77 @@ function PodiumCard({
 }
 
 function TagTeamDuoAsset({ title }: { title: ChampionTitleDefinition }) {
-  const beltUrl = managedMediaPublicUrl("belt", title.id, title.assetUrl);
-  const leftHolder = title.holders[0] ?? null;
-  const rightHolder = title.holders[1] ?? null;
-  const leftAvatar = leftHolder ? avatarForPlayerName(leftHolder.name) : managedMediaPublicUrl("avatar", "silhouette", SILHOUETTE_BACKDROP);
-  const rightAvatar = rightHolder ? avatarForPlayerName(rightHolder.name) : managedMediaPublicUrl("avatar", "silhouette", SILHOUETTE_BACKDROP);
+  const tagTeamAsset = managedMediaPublicUrl(
+    "belt",
+    "tag-team",
+    "/champions/players/tagteam_champ.png",
+  );
 
   return (
-    <div className="relative mx-auto h-[24rem] w-full max-w-[35rem] overflow-visible">
-      <div className="absolute inset-x-8 bottom-4 h-px bg-gradient-to-r from-transparent via-amber-200/22 to-transparent" />
-      <div className="absolute bottom-0 left-[4%] top-0 w-[53%]">
-        <Image
-          src={leftAvatar}
-          alt=""
-          fill
-          unoptimized
-          sizes="(min-width: 1024px) 22vw, 46vw"
-          className="object-contain object-bottom opacity-72 [mask-image:linear-gradient(180deg,black_0%,black_80%,transparent_100%)]"
-        />
-        <div className="absolute inset-x-0 bottom-[-10%] h-[45%]">
-          <Image
-            src={beltUrl}
-            alt=""
-            fill
-            unoptimized
-            sizes="(min-width: 1024px) 18vw, 42vw"
-            className="object-contain drop-shadow-[0_18px_36px_rgba(0,0,0,0.58)]"
-          />
-        </div>
-      </div>
-      <div className="absolute bottom-0 right-[4%] top-0 w-[53%]">
-        <Image
-          src={rightAvatar}
-          alt=""
-          fill
-          unoptimized
-          sizes="(min-width: 1024px) 22vw, 46vw"
-          className="object-contain object-bottom opacity-62 [mask-image:linear-gradient(180deg,black_0%,black_80%,transparent_100%)]"
-          style={{ transform: "scaleX(-1)" }}
-        />
-        <div className="absolute inset-x-0 bottom-[-10%] h-[45%]">
-          <Image
-            src={beltUrl}
-            alt=""
-            fill
-            unoptimized
-            sizes="(min-width: 1024px) 18vw, 42vw"
-            className="object-contain drop-shadow-[0_18px_36px_rgba(0,0,0,0.58)]"
-          />
-        </div>
-      </div>
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-[#03070d] to-transparent" />
+    <div className="relative mx-auto h-[17rem] w-full max-w-[36rem] overflow-visible sm:h-[19rem] lg:h-[20rem]">
+      <div className="absolute inset-x-8 bottom-3 h-px bg-gradient-to-r from-transparent via-amber-200/24 to-transparent" />
+      <Image
+        src={tagTeamAsset}
+        alt={`${title.displayName} artwork`}
+        fill
+        sizes="(max-width: 768px) 92vw, 36rem"
+        className="object-contain object-bottom drop-shadow-[0_30px_42px_rgba(0,0,0,0.58)]"
+        priority={false}
+      />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#050910] via-[#050910]/35 to-transparent" />
     </div>
   );
 }
 
+
+
 function TagTeamCard({ titleState }: { titleState: ChampionTitleState }) {
   const title = titleState;
+
   return (
-    <section className="relative overflow-hidden rounded-[1.8rem] border border-slate-200/16 bg-[radial-gradient(circle_at_15%_0%,rgba(226,232,240,0.15),transparent_32%),radial-gradient(circle_at_85%_20%,rgba(251,191,36,0.12),transparent_28%),linear-gradient(135deg,rgba(8,13,22,0.96),rgba(3,7,13,0.98))] p-5 shadow-[0_30px_90px_rgba(0,0,0,0.34)] sm:p-6">
-      <div className="grid gap-5 lg:grid-cols-[minmax(15rem,0.75fr)_minmax(0,1fr)_minmax(18rem,0.85fr)] lg:items-center">
-        <Link href={title.routeHref} className="block">
-          <TagTeamDuoAsset title={title} />
-        </Link>
+    <section className="relative overflow-hidden rounded-[1.8rem] border border-slate-200/16 bg-[radial-gradient(circle_at_15%_0%,rgba(226,232,240,0.15),transparent_32%),radial-gradient(circle_at_85%_20%,rgba(251,191,36,0.12),transparent_28%),linear-gradient(135deg,rgba(8,13,22,0.98),rgba(3,7,13,0.99))] p-5 shadow-[0_30px_90px_rgba(0,0,0,0.34)] sm:p-6">
+      <div className="grid gap-7 lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.78fr)] lg:items-stretch">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.32em] text-slate-400">
-            <Users className="h-4 w-4 text-slate-200" />
-            Tag Team Title
-          </div>
-          <Link href={title.routeHref}>
-            <h2 className="mt-3 font-serif text-3xl font-semibold text-amber-50 sm:text-4xl">
-              {title.displayName}
-            </h2>
+          <Link href={title.routeHref} className="block">
+            <TagTeamDuoAsset title={title} />
           </Link>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">{title.rule}</p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <HolderLine title={title} dense />
-            <TributePill title={title} />
-          </div>
-          <div className="mt-4">
-            <ChallengeButton title={title} />
+
+          <div className="relative z-10 -mt-3 max-w-3xl">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.32em] text-slate-400">
+              <Users className="h-4 w-4 text-slate-200" />
+              Tag Team Title
+            </div>
+
+            <Link href={title.routeHref}>
+              <h2 className="mt-3 font-serif text-4xl font-semibold leading-tight text-amber-50 sm:text-5xl">
+                {title.displayName}
+              </h2>
+            </Link>
+
+            <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base sm:leading-7">
+              {title.rule}
+            </p>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <HolderLine title={title} dense />
+              <TributePill title={title} />
+            </div>
+
+            <div className="mt-5">
+              <ChallengeButton title={title} />
+            </div>
           </div>
         </div>
-        <div className="min-w-0">
+
+        <div className="min-w-0 self-stretch lg:pt-3">
           <ContenderList title={title} />
         </div>
       </div>
     </section>
   );
 }
+
+
 
 function NationalCard({ titleState }: { titleState: ChampionTitleState }) {
   const title = titleState;
@@ -508,6 +559,7 @@ function NationalCard({ titleState }: { titleState: ChampionTitleState }) {
           </span>
           <ChallengeButton title={title} compact />
         </div>
+        <LastTributeProof title={title} compact />
         <ContenderList title={title} compact />
       </div>
     </article>
@@ -652,7 +704,7 @@ export default async function ChampionsPage() {
           <div className="min-w-0">
             <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.34em] text-amber-100/74">
               <Crown className="h-4 w-4" />
-              AoE2DE War Wagers title economy
+              AoE2WAR title economy
             </div>
             <h1 className="mt-4 max-w-5xl font-serif text-4xl font-semibold uppercase tracking-[0.1em] text-amber-50 sm:text-6xl">
               Championship Belts

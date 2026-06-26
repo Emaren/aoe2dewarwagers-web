@@ -22,23 +22,23 @@ import {
 
 const EVENT_TIMESTAMP = new Date("2026-07-10T20:00:00Z").getTime();
 
-const OFFICIAL_POSTER = "/uploads/managed-assets/wolomania/wolomania.png";
+const OFFICIAL_POSTER = "/uploads/managed-assets/wolomania/wolomania.webp";
 
 const ASSETS = {
   belt: {
-    src: "/uploads/managed-assets/wolomania/aoe2war_champ.png",
+    src: "/uploads/managed-assets/wolomania/aoe2war_champ.webp",
     fallback: "/uploads/managed-assets/belt/world-1781561316794-0a26a86e.png",
   },
   emaren: {
-    src: "/uploads/managed-assets/wolomania/emaren_warrior_2.png",
+    src: "/uploads/managed-assets/wolomania/emaren_warrior_2.webp",
     fallback: "/uploads/managed-assets/avatar/emaren-1781569822986-d51b50eb.png",
   },
   jim: {
-    src: "/uploads/managed-assets/wolomania/jim_warrior.png",
+    src: "/uploads/managed-assets/wolomania/jim_warrior.webp",
     fallback: "/uploads/managed-assets/avatar/jim-1781560436622-52fb61a1.png",
   },
   julio: {
-    src: "/uploads/managed-assets/wolomania/julio_warrior.png",
+    src: "/uploads/managed-assets/wolomania/julio_warrior.webp",
     fallback: "/uploads/managed-assets/avatar/julio-alvarez-1781569866259-256b2ad7.png",
   },
 };
@@ -290,7 +290,7 @@ export default function WolomaniaPageClient() {
                   Wolomania I
                 </h2>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-300">
-                  The flagship fight-night artwork for the first AoE2DE War Wagers championship event. The interactive event board continues below.
+                  The flagship fight-night artwork for the first AoE2WAR championship event. The interactive event board continues below.
                 </p>
               </div>
 
@@ -334,7 +334,7 @@ export default function WolomaniaPageClient() {
               </div>
               <div className="mt-3 text-xs font-bold uppercase tracking-[0.22em] text-stone-300 sm:text-sm">
                 July 10, 2026 <span className="text-amber-300">•</span> 8:00 PM UTC{" "}
-                <span className="text-amber-300">•</span> Live on AoE2DE War Wagers.com
+                <span className="text-amber-300">•</span> Live on AoE2WAR.com
               </div>
             </div>
 
@@ -355,7 +355,7 @@ export default function WolomaniaPageClient() {
                     🇨🇦 Canada
                   </div>
                   <p className="mt-3 max-w-xs text-xs uppercase tracking-[0.18em] text-amber-100/70">
-                    Founder of AoE2DE War Wagers · Live host & commentator
+                    Founder of AoE2WAR · Live host & commentator
                   </p>
                 </div>
               </aside>
@@ -365,7 +365,7 @@ export default function WolomaniaPageClient() {
                 <AssetImage
                   src={ASSETS.belt.src}
                   fallback={ASSETS.belt.fallback}
-                  alt="AoE2DE War Wagers championship belt"
+                  alt="AoE2WAR championship belt"
                   className="relative z-10 mx-auto max-h-[310px] w-full object-contain drop-shadow-[0_30px_80px_rgba(0,0,0,0.8)]"
                 />
 
@@ -516,7 +516,7 @@ export default function WolomaniaPageClient() {
             <InfoTile icon={<Swords className="h-5 w-5" />} title="About Wolomania">
               <p className="text-sm leading-7 text-stone-300">
                 The ultimate test of strategy, skill, pressure, and legacy. One night. One match.
-                One player becomes the first name carved into AoE2DE War Wagers history.
+                One player becomes the first name carved into AoE2WAR history.
               </p>
               <Link
                 href="/forum"
@@ -673,7 +673,7 @@ export default function WolomaniaPageClient() {
 
           <footer className="mx-auto mt-7 flex max-w-7xl flex-wrap items-center justify-between gap-4 border-t border-white/10 pt-5 text-xs text-stone-500">
             <div>
-              <div className="font-serif text-2xl font-black text-amber-100">AoE2DE War Wagers</div>
+              <div className="font-serif text-2xl font-black text-amber-100">AoE2WAR</div>
               <div className="uppercase tracking-[0.24em] text-amber-300/55">Where legends are made</div>
             </div>
             <div className="flex flex-wrap gap-4 uppercase tracking-[0.18em]">
@@ -682,7 +682,7 @@ export default function WolomaniaPageClient() {
               <Link href="/watch" className="hover:text-amber-100">Watch</Link>
               <Link href="/wolo" className="hover:text-amber-100">WOLO</Link>
             </div>
-            <div className="font-black uppercase tracking-[0.22em] text-amber-200">aoe2dewarwagers.com</div>
+            <div className="font-black uppercase tracking-[0.22em] text-amber-200">aoe2war.com</div>
           </footer>
         </section>
       </div>

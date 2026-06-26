@@ -20,16 +20,6 @@ type ChampionDetailParams = {
   slug: string[];
 };
 
-const PLAYER_BACKDROPS: Record<string, string> = {
-  emaren: "/champions/players/emaren.png",
-  jim: "/champions/players/jim.png",
-  "julio alvarez": "/champions/players/julio.png",
-  julio: "/champions/players/julio.png",
-  sniper: "/champions/players/sniper.png",
-};
-
-const SILHOUETTE_BACKDROP = "/champions/players/silhouette.png";
-
 export async function generateMetadata({
   params,
 }: {
@@ -45,7 +35,7 @@ export async function generateMetadata({
   }
 
   return {
-    title: `${title.displayName} | AoE2DE War Wagers`,
+    title: `${title.displayName} | AoE2WAR`,
     description: title.rule,
   };
 }
@@ -53,13 +43,6 @@ export async function generateMetadata({
 function holderLabel(title: ChampionTitleDefinition) {
   if (title.holders.length === 0) return "Vacant";
   return title.holders.map((holder) => holder.name).join(" & ");
-}
-
-function backdropForTitle(title: ChampionTitleDefinition) {
-  const holder = title.holders[0];
-  if (holder) return PLAYER_BACKDROPS[holder.name.trim().toLowerCase()] || SILHOUETTE_BACKDROP;
-  if (title.id === "national-canada") return PLAYER_BACKDROPS.emaren;
-  return SILHOUETTE_BACKDROP;
 }
 
 function challengeHref(title: ChampionTitleDefinition) {
@@ -76,6 +59,25 @@ function challengeHref(title: ChampionTitleDefinition) {
   }
 
   return `/challenge?${params.toString()}#schedule-game`;
+}
+
+function txProofHref(txHash: string) {
+  return `/api/wolo/tx/${encodeURIComponent(txHash)}`;
+}
+
+function shortTxHash(txHash: string) {
+  return `${txHash.slice(0, 8)}…${txHash.slice(-6)}`;
+}
+
+function formatShortDate(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString("en-CA", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 export default async function ChampionTitleDetailPage({
@@ -117,6 +119,12 @@ export default async function ChampionTitleDetailPage({
             <div className="mt-5 flex flex-wrap gap-2">
               <Signal label="Holder" value={holderLabel(title)} />
               <Signal label={tributeLabel(title.tributeKind)} value={formatDailyTribute(title).split(": ")[1]} />
+              {title.lastTributeTxHash ? (
+                <Signal
+                  label="Last tribute"
+                  value={`${(title.lastTributeAmountWolo ?? title.dailyWolo).toLocaleString()} WOLO paid`}
+                />
+              ) : null}
               {title.currentRecord ? <Signal label="Current Record" value={title.currentRecord} /> : null}
             </div>
             <div className="mt-6 flex flex-wrap gap-3">
@@ -138,22 +146,13 @@ export default async function ChampionTitleDetailPage({
 
           <div className="relative mx-auto aspect-[1.75/1] w-full max-w-[38rem] overflow-visible">
             <Image
-              src={backdropForTitle(title)}
-              alt=""
-              fill
-              priority
-              unoptimized
-              sizes="(min-width: 1024px) 38vw, 92vw"
-              className="z-0 object-cover object-top opacity-28 mix-blend-screen [mask-image:linear-gradient(180deg,black_0%,black_58%,transparent_96%)]"
-            />
-            <Image
               src={title.assetUrl}
               alt=""
               fill
               priority
               unoptimized
               sizes="(min-width: 1024px) 44vw, 92vw"
-              className="z-10 object-contain drop-shadow-[0_24px_55px_rgba(0,0,0,0.62)]"
+              className="object-contain drop-shadow-[0_24px_55px_rgba(0,0,0,0.62)]"
             />
           </div>
         </div>
@@ -188,6 +187,26 @@ export default async function ChampionTitleDetailPage({
               Belts, national titles, ELO ladders, and tag titles pay a Reward Tribute. Special designations pay an Artifact Bonus.
             </p>
           </Panel>
+
+          {title.lastTributeTxHash ? (
+            <Panel icon={History} eyebrow="Mainnet Proof" title="Last tribute paid">
+              <div className="text-2xl font-semibold text-emerald-100">
+                {(title.lastTributeAmountWolo ?? title.dailyWolo).toLocaleString()} WOLO
+                {title.lastTributeRecipient ? ` → ${title.lastTributeRecipient}` : ""}
+              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-400">
+                Paid {formatShortDate(title.lastTributePaidAt) || "on-chain"} through the AoE2WAR Founder Rewards settlement rail.
+                {title.nextTributeDay ? ` Next scheduled UTC tribute day: ${title.nextTributeDay}.` : ""}
+              </p>
+              <Link
+                href={txProofHref(title.lastTributeTxHash)}
+                className="mt-4 inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-400/10 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:border-emerald-200/40 hover:bg-emerald-400/15"
+              >
+                View tx {shortTxHash(title.lastTributeTxHash)}
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Panel>
+          ) : null}
 
           <Panel icon={History} eyebrow="History" title="Reign ledger">
             <p className="text-sm leading-6 text-slate-300">{title.historyPlaceholder}</p>

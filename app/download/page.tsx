@@ -123,7 +123,7 @@ export default function DownloadPage() {
             </div>
 
             <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-300/5 px-4 py-3 text-xs leading-6 text-amber-50/85">
-              Beta packages are currently unsigned. Windows SmartScreen, macOS Gatekeeper, or Linux desktop trust prompts may appear during installation.
+              Unsigned beta packages. Windows, macOS, and Linux builds are ready for testing, but your OS may ask for an extra confirmation on first launch.
             </div>
           </div>
 

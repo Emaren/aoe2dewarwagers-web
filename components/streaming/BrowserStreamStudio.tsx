@@ -101,7 +101,7 @@ function buildFreeSessionKey() {
 function matchTitle(session: LiveGamesSuggestion | null, fallback: string | null | undefined) {
   if (session?.title) return session.title;
   if (fallback?.trim()) return fallback.trim();
-  return "AoE2DE War Wagers live";
+  return "AoE2WAR live";
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit) {
@@ -321,7 +321,7 @@ export default function BrowserStreamStudio({
             title:
               entry.players.length > 0
                 ? entry.players.map((player) => player.name).join(" vs ")
-                : entry.originalFilename || "AoE2DE War Wagers live",
+                : entry.originalFilename || "AoE2WAR live",
             mapName: entry.mapName,
             state: entry.state,
           }));
@@ -542,7 +542,7 @@ export default function BrowserStreamStudio({
         setStream(payload.stream);
       }
       setLastStreamOutput(
-        status === "live" ? "Heartbeat OK. Stream is visible on AoE2DE War Wagers." : "Heartbeat sent."
+        status === "live" ? "Heartbeat OK. Stream is visible on AoE2WAR." : "Heartbeat sent."
       );
       void sendStreamEvent("stream_heartbeat", {
         streamId,
@@ -575,7 +575,7 @@ export default function BrowserStreamStudio({
         body: JSON.stringify({
           sessionKey: effectiveSessionKey,
           title: activeTitle,
-          label: "AoE2DE War Wagers Live",
+          label: "AoE2WAR Live",
           playerLabel,
           thumbnailUrl,
           mediaMimeType,
@@ -744,7 +744,7 @@ export default function BrowserStreamStudio({
             <Video className="h-4 w-4 text-sky-100" aria-hidden="true" />
             Streaming
           </div>
-          <div className="mt-2 text-lg font-semibold text-white">AoE2DE War Wagers Live</div>
+          <div className="mt-2 text-lg font-semibold text-white">AoE2WAR Live</div>
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
             <span className="truncate text-sm text-slate-300">{activeTitle}</span>
             {hasWatcherBinding ? (
