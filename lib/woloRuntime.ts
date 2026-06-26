@@ -29,6 +29,19 @@ const WOLO_STALE_AFTER_SECONDS =
   Number.isFinite(parsedStaleAfterSeconds) && parsedStaleAfterSeconds > 0
     ? parsedStaleAfterSeconds
     : 20;
+const parsedHttpTimeoutMs = Number.parseInt(process.env.WOLO_RUNTIME_HTTP_TIMEOUT_MS || "5000", 10);
+const WOLO_RUNTIME_HTTP_TIMEOUT_MS =
+  Number.isFinite(parsedHttpTimeoutMs) && parsedHttpTimeoutMs > 0 ? parsedHttpTimeoutMs : 5000;
+const parsedBalanceCliTimeoutMs = Number.parseInt(
+  process.env.WOLO_BALANCE_CLI_TIMEOUT_MS || "3000",
+  10
+);
+const WOLO_BALANCE_CLI_TIMEOUT_MS =
+  Number.isFinite(parsedBalanceCliTimeoutMs) && parsedBalanceCliTimeoutMs > 0
+    ? parsedBalanceCliTimeoutMs
+    : 3000;
+const WOLO_BALANCE_CLI_FALLBACK_ENABLED =
+  process.env.WOLO_BALANCE_CLI_FALLBACK?.trim() === "1";
 
 type TendermintStatusPayload = {
   result?: {
@@ -126,7 +139,7 @@ function requestText(url: string) {
       }
     );
 
-    request.setTimeout(5000, () => {
+    request.setTimeout(WOLO_RUNTIME_HTTP_TIMEOUT_MS, () => {
       request.destroy(new Error(`Timed out reaching ${target.hostname}`));
     });
 
@@ -209,7 +222,7 @@ async function fetchWoloBalanceAmountFromCli(address: string) {
     ],
     {
       maxBuffer: 1024 * 1024,
-      timeout: 15_000,
+      timeout: WOLO_BALANCE_CLI_TIMEOUT_MS,
     }
   );
 
@@ -397,7 +410,11 @@ export async function fetchWoloBalanceAmount(address: string) {
     );
 
     return payload.balances?.find((coin) => coin.denom === WOLO_BASE_DENOM)?.amount || "0";
-  } catch {
+  } catch (error) {
+    if (!WOLO_BALANCE_CLI_FALLBACK_ENABLED) {
+      throw error;
+    }
+
     return fetchWoloBalanceAmountFromCli(trimmed);
   }
 }
