@@ -72,6 +72,12 @@ journalctl -u aoe2dewarwagers-web.service -n 40 --no-pager
   `20260621`.
 - Keep watcher release artifacts DE-specific. Do not replace
   `AoE2DEWarWagers` watcher files with HD watcher artifacts during sync.
+- For `/wolo` live WoloChain parity with `aoe2war.com`, the production web env
+  must include `WOLO_INTERNAL_RPC_URL=http://127.0.0.1:27657`,
+  `WOLO_DAEMON_SYSTEMD_UNIT=wolochaind-mainnet`, and
+  `WOLO_DAEMON_TAIL_LINES=40`. The DE nginx vhost must allow
+  `/api/wolo/daemon-log` to proxy to Next.js; blocking that route leaves the
+  visible daemon panel stuck on "failed to load daemon log".
 
 ### 2026-05-30 Advanced lobby arena and live ticker
 
@@ -210,6 +216,8 @@ curl -I https://aoe2dewarwagers.com/contact-emaren
 curl -s https://aoe2dewarwagers.com/api/lobby | jq '.leaderboard.trackedPlayers, (.leaderboard.entries | length)'
 curl -s https://aoe2dewarwagers.com/api/lobby | jq '{ticker: (.liveTicker.items | length), market: .woloMarket.poolId}'
 curl -s https://aoe2dewarwagers.com/api/bets | jq '.wolo | { betEscrowMode, onchainEscrowEnabled, onchainEscrowRequired, betEscrowAddress }'
+curl -s https://aoe2dewarwagers.com/api/wolo/status | jq '{healthy, source, latestBlockHeight, consensusStatus, statusLabel}'
+curl -s https://aoe2dewarwagers.com/api/wolo/daemon-log | jq '{ok, label, lineCount: (.lines | length)}'
 curl -s https://aoe2dewarwagers.com/api/staking/summary?period=24h | jq '.summary["24h"] | {betsPlaced, betVolumeWolo, activeStakers, totalStakedWolo, directTransferCount}'
 curl -s https://aoe2dewarwagers.com/api/staking/summary?period=all | jq '.summary.all.activity[] | select(.eventType=="SETTLEMENT") | {label, detail}'
 curl -s https://aoe2dewarwagers.com/api/wolo/mainnet-transfers?limit=5 | jq '{totalRows, latestTimestamp}'

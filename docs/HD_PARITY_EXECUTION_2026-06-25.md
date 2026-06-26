@@ -57,7 +57,14 @@ site, domain, services, watcher identity, API port, and deployment path.
   `/national-champions`, `/wolochain`, `/staking`, `/watch`, `/download`,
   `/api/lobby`, `/api/bets`, `/api/wolo/osmosis-pulse`,
   `/api/wolo/wallet-dashboard`, and watcher download artifact routes.
+- Production WoloChain display: `/api/wolo/status` must report
+  `healthy=true`, `source=http://127.0.0.1:27657`, and
+  `consensusStatus=advancing`; `/api/wolo/daemon-log` must return
+  `ok=true` with live `wolochaind-mainnet.journal` lines.
 
 ## Completion record
 
-In progress.
+Complete. Deployed to `aoe2dewarwagers.com` with DE-specific identity
+preserved. The follow-up WoloChain display parity fix pointed the DE web
+service at the local WoloChain mainnet RPC and allowed the public daemon-log
+route through nginx so `/wolo` mirrors the live HD runtime panel.
