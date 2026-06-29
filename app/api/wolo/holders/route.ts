@@ -99,6 +99,7 @@ function formatWolo(amountUwolo: string, grouped = false): string {
 
 function getRestUrl() {
   return (
+    process.env.WOLO_INTERNAL_REST_URL ||
     process.env.WOLO_REST_URL ||
     process.env.WOLO_SETTLEMENT_PUBLIC_REST_URL ||
     process.env.NEXT_PUBLIC_WOLO_REST_URL ||

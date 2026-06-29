@@ -29,6 +29,10 @@ one deployment.
   not collide on the shared WoloChain rail.
 - Staking deposit classification uses the existing
   `AoE2DEWarWagers staking deposit` memo.
+- Network-restricted production reads WoloChain through
+  `WOLO_INTERNAL_RPC_URL=http://127.0.0.1:27657` and
+  `WOLO_INTERNAL_REST_URL=http://127.0.0.1:1318`; browser-facing endpoints
+  remain the public RPC/REST domains.
 
 ## Mirrored feature delta
 

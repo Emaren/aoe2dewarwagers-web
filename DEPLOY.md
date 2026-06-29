@@ -91,6 +91,7 @@ journalctl -u aoe2dewarwagers-web.service -n 40 --no-pager
   `AoE2DEWarWagers` watcher files with HD watcher artifacts during sync.
 - For `/wolo` live WoloChain parity with `aoe2war.com`, the production web env
   must include `WOLO_INTERNAL_RPC_URL=http://127.0.0.1:27657`,
+  `WOLO_INTERNAL_REST_URL=http://127.0.0.1:1318`,
   `WOLO_DAEMON_SYSTEMD_UNIT=wolochaind-mainnet`, and
   `WOLO_DAEMON_TAIL_LINES=40`. The DE nginx vhost must allow
   `/api/wolo/daemon-log` to proxy to Next.js; blocking that route leaves the
