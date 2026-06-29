@@ -6,6 +6,162 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import WoloMarketPulseTile from "@/components/wolo/WoloMarketPulseTile";
 
+function WoloHeroWordmark() {
+  const textProps = {
+    x: 18,
+    y: 119,
+    fontFamily: "'Arial Black', Impact, Haettenschweiler, system-ui, sans-serif",
+    fontSize: 120,
+    fontWeight: 900,
+    letterSpacing: -0.5,
+    textLength: 648,
+    lengthAdjust: "spacingAndGlyphs" as const,
+  };
+
+  return (
+    <span
+      aria-label="WOLO"
+      className="block w-[clamp(20rem,32vw,36rem)] max-w-full"
+    >
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 760 168"
+        role="img"
+        className="block h-auto w-full overflow-visible"
+      >
+        <defs>
+          <linearGradient id="woloFinalLogoGoldFace" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#fff9ce" />
+            <stop offset="9%" stopColor="#ffe982" />
+            <stop offset="22%" stopColor="#f4cd3d" />
+            <stop offset="38%" stopColor="#dca716" />
+            <stop offset="56%" stopColor="#b97708" />
+            <stop offset="73%" stopColor="#744006" />
+            <stop offset="89%" stopColor="#2d1103" />
+            <stop offset="100%" stopColor="#070200" />
+          </linearGradient>
+
+          <linearGradient id="woloFinalLogoGoldEdge" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#fff0a0" />
+            <stop offset="32%" stopColor="#d89b11" />
+            <stop offset="70%" stopColor="#5b2a04" />
+            <stop offset="100%" stopColor="#0c0300" />
+          </linearGradient>
+
+          <linearGradient id="woloFinalTopSteelGloss" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.62" />
+            <stop offset="8%" stopColor="#eeeeE3" stopOpacity="0.36" />
+            <stop offset="17%" stopColor="#cbc9bd" stopOpacity="0.13" />
+            <stop offset="29%" stopColor="#ffffff" stopOpacity="0" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+          </linearGradient>
+
+          <linearGradient id="woloFinalBottomBlackBite" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#000000" stopOpacity="0" />
+            <stop offset="54%" stopColor="#000000" stopOpacity="0" />
+            <stop offset="76%" stopColor="#000000" stopOpacity="0.22" />
+            <stop offset="91%" stopColor="#000000" stopOpacity="0.50" />
+            <stop offset="100%" stopColor="#000000" stopOpacity="0.72" />
+          </linearGradient>
+
+          <linearGradient id="woloFinalLogoWarmLift" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0%" stopColor="#704006" stopOpacity="0.07" />
+            <stop offset="20%" stopColor="#ffe06b" stopOpacity="0.13" />
+            <stop offset="48%" stopColor="#fff1a7" stopOpacity="0.06" />
+            <stop offset="76%" stopColor="#cf9512" stopOpacity="0.11" />
+            <stop offset="100%" stopColor="#4a2203" stopOpacity="0.08" />
+          </linearGradient>
+
+          <filter
+            id="woloFinalWordmarkShadow"
+            x="-18%"
+            y="-50%"
+            width="150%"
+            height="230%"
+            colorInterpolationFilters="sRGB"
+          >
+            <feDropShadow dx="0" dy="2" stdDeviation="1.1" floodColor="#000000" floodOpacity="0.94" />
+            <feDropShadow dx="0" dy="7" stdDeviation="3.6" floodColor="#000000" floodOpacity="0.55" />
+            <feDropShadow dx="0" dy="14" stdDeviation="7.5" floodColor="#000000" floodOpacity="0.34" />
+            <feDropShadow dx="0" dy="0" stdDeviation="3.2" floodColor="#dca313" floodOpacity="0.13" />
+          </filter>
+        </defs>
+
+        <g filter="url(#woloFinalWordmarkShadow)">
+          <text
+            {...textProps}
+            fill="#100500"
+            stroke="#050100"
+            strokeWidth="9.5"
+            strokeLinejoin="round"
+            paintOrder="stroke fill"
+          >
+            WOLO
+          </text>
+
+          <text
+            {...textProps}
+            fill="url(#woloFinalLogoGoldFace)"
+            stroke="url(#woloFinalLogoGoldEdge)"
+            strokeWidth="2.35"
+            strokeLinejoin="round"
+            paintOrder="stroke fill"
+          >
+            WOLO
+          </text>
+
+          <text
+            {...textProps}
+            fill="url(#woloFinalLogoWarmLift)"
+            opacity="0.58"
+          >
+            WOLO
+          </text>
+
+          <text
+            {...textProps}
+            fill="url(#woloFinalTopSteelGloss)"
+            opacity="0.84"
+          >
+            WOLO
+          </text>
+
+          <text
+            {...textProps}
+            fill="url(#woloFinalBottomBlackBite)"
+            opacity="0.88"
+          >
+            WOLO
+          </text>
+
+          <text
+            {...textProps}
+            fill="none"
+            stroke="rgba(255,239,156,0.20)"
+            strokeWidth="0.72"
+            strokeLinejoin="round"
+          >
+            WOLO
+          </text>
+
+          <text
+            {...textProps}
+            fill="none"
+            stroke="rgba(0,0,0,0.56)"
+            strokeWidth="0.7"
+            strokeLinejoin="round"
+            transform="translate(0 2)"
+          >
+            WOLO
+          </text>
+        </g>
+      </svg>
+    </span>
+  );
+}
+
+
+
 type PulsePayload = {
   ok: boolean;
   updatedAt?: string;
@@ -304,7 +460,7 @@ export default function WoloHeroTile() {
                     filter: "drop-shadow(0 10px 26px rgba(0,0,0,0.28))",
                   }}
                 >
-                  WOLO
+                  <WoloHeroWordmark />
                 </div>
                 <div className="mt-1 text-[0.72rem] uppercase tracking-[0.46em] text-white/82">
                   WoloChain settlement rail

@@ -13,8 +13,10 @@ It currently owns the premium lobby/community surface, leaderboard presentation,
 - [PRODUCT_STATE.md](/Users/tonyblum/projects/AoE2DEWarWagers/app-prodn/PRODUCT_STATE.md)
 - [WORKSPACE.md](/Users/tonyblum/projects/AoE2DEWarWagers/app-prodn/WORKSPACE.md)
 - [docs/HD_PARITY_EXECUTION_2026-06-18.md](/Users/tonyblum/projects/AoE2DEWarWagers/app-prodn/docs/HD_PARITY_EXECUTION_2026-06-18.md)
+- [docs/HD_PARITY_EXECUTION_2026-06-28.md](/Users/tonyblum/projects/AoE2DEWarWagers/app-prodn/docs/HD_PARITY_EXECUTION_2026-06-28.md)
 - [docs/CHAMPIONS_TITLE_ECONOMY.md](/Users/tonyblum/projects/AoE2DEWarWagers/app-prodn/docs/CHAMPIONS_TITLE_ECONOMY.md)
 - [docs/SCHEDULED_MATCH_SETTLEMENTS.md](/Users/tonyblum/projects/AoE2DEWarWagers/app-prodn/docs/SCHEDULED_MATCH_SETTLEMENTS.md)
+- [docs/ZODIAC_TRAINING_PAGE.md](/Users/tonyblum/projects/AoE2DEWarWagers/app-prodn/docs/ZODIAC_TRAINING_PAGE.md)
 
 ## Stack
 
@@ -25,8 +27,12 @@ It currently owns the premium lobby/community surface, leaderboard presentation,
 - Advanced `/lobby` arena stack with the moving live ticker, Watch & Chat hero/comments rail, compact hero bet slip, compact WOLO swap tile, and the preserved Basic/Advanced/Extreme community lobby toggle. Extreme owns the widened lobby frame, oversized Featured Warriors stage, and side-by-side leaderboard contender hero.
 - Claimed player profiles default to the Advanced command center; unclaimed replay-built profiles default to the classic Basic claim page, and both can toggle Basic/Advanced
 - Advanced player profiles include lazy match archive, watcher proof, form/rivalry diagnostics, resource emblems, AI Scribe/Grimer readout, stream signal, and premium `$WOLO`/staking stats
+- Claimed profiles can switch among Basic, Advanced, and cinematic Extreme views
 - The public Kingdom spine includes `/kingdom`, `/champions`, `/national-champions`, and `/forum`, with the legacy `/belts`, `/nations`, and `/realm` paths redirecting into the new route names
-- `/champions` owns the app-side championship title economy: podium belts, tag titles, national titles, ELO titles, special designations, challenge links, and detail pages
+- `/champions` owns the app-side championship title economy: podium belts, tag titles, national titles, ELO titles, special designations, live custody/bounty overlays, challenge links, and detail pages
+- `/admin/trophies` is the persistent War Trophy command center for definitions, holder/Guardian custody, challenges, replay proof, dry-run settlement, payouts, NFT intents, settings, and audit history
+- `/admin/events` is the Event Studio for the active cinematic event shared by `/` and `/lobby`
+- `/zodiac` is the DE-specific Deathmatch training and replay-review funnel
 - Lazy client islands for wallet-heavy `/wolo`, `/wallet`, and `/connect-wallet` routes so the server shell paints with a small first-load bundle
 
 ## Shipped public surfaces
@@ -38,6 +44,7 @@ Current notable product routes include:
 - `/bets`
 - `/kingdom`
 - `/champions`
+- `/challenge`
 - `/national-champions`
 - `/forum`
 - `/live-games`
@@ -48,6 +55,7 @@ Current notable product routes include:
 - `/war-chest`
 - `/tournaments/[slug]`
 - `/wolo`
+- `/zodiac`
 - `/replay-parser`
 - admin/profile/inbox-related routes
 
@@ -57,10 +65,14 @@ The current first-impression path is no longer just the homepage. The real produ
 
 - `/champions` and `/champions/[...slug]` render the app-side title economy from `lib/champions/titles.ts` and `lib/champions/titleState.ts`.
 - Belts, tag titles, national titles, and ELO titles use `Reward Tribute`; special designation artifacts use `Artifact Bonus`.
+- `/challenge` defaults to the Extreme smart composer, with Basic and Advanced alternatives. Eligible title stakes are discovered automatically, challenge deposits use the structured WoloChain memo contract, and the API records funding only after WoloChain verifies the signed escrow transfer.
+- `/staking` separates memo-classified operator reserve funding from user stake liability and enforces a minimum 10,000 WOLO operating reserve without hiding direct funding activity.
 - Championship art assets under `public/champions` should keep real alpha transparency; holder/silhouette backplates live in `public/champions/players`.
 - `/profile` stores title eligibility settings through `represented_country` and `gender_division`.
-- `/admin` includes a disabled title-operator scaffold for future assignment, vacation, top-10, and record rails.
-- This surface is presentation and app workflow only. It does not redefine WoloChain denom truth, signed movement, escrow, custody, or settlement truth.
+- Seeded national and Elite trophies persist through Prisma and overlay the public Champions and profile surfaces; projected bounty remains app display math.
+- Public title challenges automatically attach eligible held belts and artifacts, then use watcher/replay proof for app-side custody settlement.
+- `/admin/trophies` provides persistent custody, economics, proof, payout, chain-intent, settings, and audit rails.
+- The current source is app-side custody. It does not redefine WoloChain denom truth, signed movement, escrow, NFT ownership, or chain settlement truth.
 
 ## Local development
 

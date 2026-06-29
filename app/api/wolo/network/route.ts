@@ -30,6 +30,7 @@ type WoloNetworkAccountRow = {
   amountUwolo: string;
   amountWolo: string;
   amountWoloFormatted: string;
+  hideBalance: boolean;
   isModule: boolean;
   isRetired: boolean;
   isUserFacing: boolean;
@@ -95,7 +96,8 @@ function sortNetworkRows(rows: WoloNetworkAccountRow[]) {
 }
 
 async function buildNetworkRow(account: WoloMainnetNetworkAccount): Promise<WoloNetworkAccountRow> {
-  const amountUwolo = normalizeAmount(await fetchWoloBalanceAmount(account.address));
+  const hideBalance = false;
+  const amountUwolo = hideBalance ? "0" : normalizeAmount(await fetchWoloBalanceAmount(account.address));
 
   return {
     label: account.label,
@@ -103,8 +105,9 @@ async function buildNetworkRow(account: WoloMainnetNetworkAccount): Promise<Wolo
     use: account.use,
     role: account.role,
     amountUwolo,
-    amountWolo: formatWolo(amountUwolo),
-    amountWoloFormatted: formatWolo(amountUwolo, true),
+    amountWolo: hideBalance ? "" : formatWolo(amountUwolo),
+    amountWoloFormatted: hideBalance ? "" : formatWolo(amountUwolo, true),
+    hideBalance,
     isModule: isWoloNetworkModuleAccount(account),
     isRetired: isWoloNetworkRetiredAccount(account),
     isUserFacing: isWoloNetworkUserFacingAccount(account),
@@ -115,10 +118,11 @@ function renderTable(rows: WoloNetworkAccountRow[], totalUwolo: string) {
   const lines = [
     `${"LABEL".padEnd(42)} ${"ADDRESS".padEnd(48)} ${"WOLO".padStart(18)} USE`,
     "-".repeat(128),
-    ...rows.map(
-      (row) =>
-        `${row.label.padEnd(42)} ${row.address.padEnd(48)} ${row.amountWoloFormatted.padStart(18)} ${row.use}`
-    ),
+    ...rows.map((row) => {
+      const amountText = row.amountWoloFormatted;
+
+      return `${row.label.padEnd(42)} ${row.address.padEnd(48)} ${amountText.padStart(18)} ${row.use}`;
+    }),
     "-".repeat(128),
     `${rows.length} known Wolo addresses`,
     `${formatWolo(totalUwolo, true)} WOLO total across known addresses`,
@@ -160,6 +164,7 @@ export async function GET(request: NextRequest) {
           amountUwolo: row.amountUwolo,
           amountWolo: row.amountWolo,
           amountWoloFormatted: row.amountWoloFormatted,
+          hideBalance: row.hideBalance,
           isModule: row.isModule,
           isRetired: row.isRetired,
           isUserFacing: row.isUserFacing,

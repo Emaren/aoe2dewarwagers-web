@@ -207,3 +207,97 @@ input[type="datetime-local"] {
   background: rgba(148, 163, 184, 0.18);
   filter: blur(8px);
 }
+
+/* AoE2WAR / WoloChain premium WOLO Wallet CTA */
+:is(a, button, [role="button"]):has(img[alt="WOLO Wallet"]),
+.wolo-wallet-cta {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: rgba(255, 214, 83, 0.44) !important;
+  color: #120700 !important;
+  background:
+    linear-gradient(
+      180deg,
+      #ffe982 0%,
+      #e7bd32 15%,
+      #d29a12 34%,
+      #b97708 54%,
+      #8a5007 74%,
+      #3b1a04 100%
+    ) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 238, 155, 0.34),
+    inset 0 -7px 13px rgba(24, 8, 0, 0.22),
+    0 7px 14px rgba(0, 0, 0, 0.32),
+    0 0 16px rgba(220, 167, 22, 0.10) !important;
+  text-shadow:
+    0 1px 0 rgba(255, 230, 128, 0.22),
+    0 -1px 0 rgba(47, 18, 0, 0.22);
+}
+
+:is(a, button, [role="button"]):has(img[alt="WOLO Wallet"])::before,
+.wolo-wallet-cta::before {
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 9%;
+  height: 26%;
+  z-index: 0;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 244, 190, 0.22) 0%,
+      rgba(218, 216, 198, 0.10) 48%,
+      rgba(255, 255, 255, 0) 100%
+    );
+  opacity: 0.54;
+  pointer-events: none;
+}
+
+:is(a, button, [role="button"]):has(img[alt="WOLO Wallet"])::after,
+.wolo-wallet-cta::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 38%;
+  z-index: 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0) 0%,
+      rgba(43, 15, 0, 0.08) 50%,
+      rgba(0, 0, 0, 0.20) 100%
+    );
+  pointer-events: none;
+}
+
+:is(a, button, [role="button"]):has(img[alt="WOLO Wallet"]) > *,
+.wolo-wallet-cta > * {
+  position: relative;
+  z-index: 1;
+}
+
+:is(a, button, [role="button"]):has(img[alt="WOLO Wallet"]) img[alt="WOLO Wallet"],
+.wolo-wallet-cta-logo,
+.wolo-wallet-cta img,
+.wolo-wallet-cta svg {
+  transform: translateY(-2px) scale(1.04);
+  filter:
+    drop-shadow(0 2px 2px rgba(0, 0, 0, 0.34))
+    drop-shadow(0 0 5px rgba(255, 221, 86, 0.12));
+}
+
+:is(a, button, [role="button"]):has(img[alt="WOLO Wallet"]):hover,
+.wolo-wallet-cta:hover {
+  border-color: rgba(255, 226, 112, 0.62) !important;
+  filter: brightness(1.035) saturate(1.02);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 238, 155, 0.42),
+    inset 0 -7px 13px rgba(24, 8, 0, 0.18),
+    0 9px 18px rgba(0, 0, 0, 0.36),
+    0 0 20px rgba(220, 167, 22, 0.14) !important;
+}
+/* End AoE2WAR / WoloChain premium WOLO Wallet CTA */

@@ -57,6 +57,23 @@ journalctl -u aoe2dewarwagers-web.service -n 40 --no-pager
 
 ## Recent deployment notes
 
+### 2026-06-28 HD parity refresh: challenge, staking, lobby, profiles, and Zodiac
+
+- Ported canonical HD changes through `2ce3cee` while preserving the DE
+  application identity, replay API, ports, session, watcher protocol, data,
+  and deployment path.
+- Added the Basic/Advanced/Extreme Challenge composer, structured
+  DE-namespaced funding memos, WoloChain deposit verification, automatic title
+  stakes, and app-side verified title settlement.
+- Added user-liability versus operator-reserve staking classification and the
+  10,000 WOLO operating-reserve policy.
+- Added full lobby chat history filters, stable reaction/history scrolling,
+  full leaderboard hydration, profile Basic/Advanced/Extreme routing, improved
+  media operator controls, and cinematic trophy payout cards.
+- Added the DE-branded `/zodiac` Deathmatch training and replay-review funnel.
+- This refresh adds no new Prisma migration file, but the standard deploy still
+  runs `npx prisma migrate deploy` before the build.
+
 ### 2026-06-25 HD parity refresh: trophies, events, Wolo, staking, and media
 
 - Mirrored the post-June-18 AoE2HDBets web feature surface into the DE site
@@ -211,6 +228,7 @@ curl -I https://aoe2dewarwagers.com/
 curl -I https://aoe2dewarwagers.com/lobby
 curl -I https://aoe2dewarwagers.com/live-games
 curl -I https://aoe2dewarwagers.com/challenge
+curl -I https://aoe2dewarwagers.com/zodiac
 curl -I https://aoe2dewarwagers.com/players
 curl -I https://aoe2dewarwagers.com/contact-emaren
 curl -s https://aoe2dewarwagers.com/api/lobby | jq '.leaderboard.trackedPlayers, (.leaderboard.entries | length)'

@@ -12,15 +12,21 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
+  type LucideIcon,
   ArrowDownLeft,
   ArrowRight,
   ArrowUpRight,
+  BadgeCheck,
   Bell,
   Clock3,
   Coins,
   Crown,
+  Download,
+  ExternalLink,
   Gem,
   ImagePlus,
+  KeyRound,
+  Link2,
   LogOut,
   Mail,
   Monitor,
@@ -29,6 +35,7 @@ import {
   ShieldCheck,
   Trophy,
   Upload,
+  UserRound,
 } from "lucide-react";
 
 import ScheduledMatchCard, {
@@ -141,6 +148,27 @@ type WoloTransactionsResponse = {
 
 const MONEY_TX_PAGE_SIZE = 20;
 
+type ProfileViewMode = "basic" | "advanced" | "extreme";
+
+const PROFILE_VIEW_MODES: Array<{
+  key: ProfileViewMode;
+  label: string;
+}> = [
+  { key: "basic", label: "Basic" },
+  { key: "advanced", label: "Advanced" },
+  { key: "extreme", label: "Extreme" },
+];
+
+function normalizedProfileName(value: string | null | undefined) {
+  return (value || "").trim().toLowerCase();
+}
+
+function isApprenticeshipAdminName(value: string | null | undefined) {
+  const normalized = normalizedProfileName(value);
+  return normalized === "emaren" || normalized === "zodiac";
+}
+
+
 function buildWatcherPairUrl(apiKey: string) {
   return `aoe2de-watcher://pair?apiKey=${encodeURIComponent(apiKey)}`;
 }
@@ -182,6 +210,7 @@ function ProfilePageContent() {
   const [watcherPairRequestStarted, setWatcherPairRequestStarted] = useState(false);
   const [claimingWolo, setClaimingWolo] = useState(false);
   const [status, setStatus] = useState("");
+  const [profileViewMode, setProfileViewMode] = useState<ProfileViewMode>("extreme");
   const [claimSeedApplied, setClaimSeedApplied] = useState(false);
   const {
     themeKey,
@@ -658,17 +687,57 @@ function ProfilePageContent() {
   const displayName = profile?.steamPersonaName || playerName || "Profile";
   const confirmedName = profile?.inGameName || "Awaiting replay proof";
   const latestWatcherKey = watcherKeys[0] ?? null;
+  const profileHandle = profile?.inGameName || profile?.steamPersonaName || playerName || "";
+  const canUseApprenticeshipAdmin =
+    Boolean((profile as { isAdmin?: boolean } | null)?.isAdmin) || isApprenticeshipAdminName(profileHandle) || isApprenticeshipAdminName(displayName);
+  const profileModeLabel =
+    profileViewMode === "basic" ? "Basic profile" : profileViewMode === "advanced" ? "Advanced profile" : "Extreme profile";
+  const profileDeckMode: "basic" | "advanced" = profileViewMode === "basic" ? "basic" : "advanced";
+  const isBasicProfileView = profileDeckMode === "basic";
+
+  if (profileViewMode === "extreme") {
+    return (
+      <ExtremeProfileView
+        profile={profile}
+        uid={uid}
+        displayName={displayName}
+        confirmedName={confirmedName}
+        profileViewMode={profileViewMode}
+        setProfileViewMode={setProfileViewMode}
+        avatarUploading={avatarUploading}
+        avatarSavingTarget={avatarSavingTarget}
+        onPreset={(target) => void chooseAvatarPreset(target)}
+        onUpload={(file) => void uploadProfileAvatar(file)}
+        mintingWatcherKey={mintingWatcherKey}
+        onPairWatcher={() => void createWatcherKey({ pairToWatcher: true })}
+        onMintKey={() => void createWatcherKey()}
+        watcherPairIntent={watcherPairIntent}
+        newWatcherKey={newWatcherKey}
+        latestWatcherKey={latestWatcherKey}
+        canUseApprenticeshipAdmin={canUseApprenticeshipAdmin}
+      />
+    );
+  }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-5xl space-y-6 py-8 text-white">
+    <div className={`mx-auto w-full min-w-0 space-y-6 py-8 text-white ${isBasicProfileView ? "max-w-5xl" : "max-w-7xl"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-white/10 bg-slate-950/58 px-4 py-3 shadow-[0_18px_60px_rgba(0,0,0,0.22)] backdrop-blur sm:px-5">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-[0.32em] text-slate-500">Profile view</div>
+          <div className="mt-1 text-sm font-semibold text-white">{profileModeLabel}</div>
+        </div>
+        <ProfileModeToggle value={profileViewMode} onChange={setProfileViewMode} />
+      </div>
+
       <section className="min-w-0 overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 p-5 sm:p-8">
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] xl:items-start">
+        <div className={`grid gap-6 xl:items-start ${isBasicProfileView ? "xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]" : "xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.74fr)]"}`}>
           <div className="min-w-0">
             <div className="text-xs uppercase tracking-[0.35em] text-white/45">Identity</div>
-            <div className="mt-4 grid gap-4 md:grid-cols-[12.5rem_minmax(0,1fr)] md:items-start">
+            <div className={`mt-4 grid gap-4 ${isBasicProfileView ? "md:grid-cols-[12.5rem_minmax(0,1fr)] md:items-start" : "lg:grid-cols-[minmax(17rem,22rem)_minmax(0,1fr)] lg:items-start"}`}>
               <ProfileAvatarPanel
                 profile={profile}
                 displayName={displayName}
+                viewMode={profileDeckMode}
                 uploading={avatarUploading}
                 savingTarget={avatarSavingTarget}
                 onPreset={(target) => void chooseAvatarPreset(target)}
@@ -683,7 +752,7 @@ function ProfilePageContent() {
                         UID {truncateUid(uid)}
                       </span>
                       <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-100">
-                        Verification level {profile?.verificationLevel ?? 0}
+                        Lv {profile?.verificationLevel ?? 0}
                       </span>
                       {profile?.verificationMethod ? (
                         <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200">
@@ -691,7 +760,7 @@ function ProfilePageContent() {
                         </span>
                       ) : null}
                       <span className="rounded-full border border-amber-200/20 bg-amber-300/10 px-3 py-1 text-xs font-semibold text-amber-100">
-                        Currently Earning {profile?.earningWoloPerDay ?? 0} WOLO/day
+                        {profile?.earningWoloPerDay ?? 0} WOLO/day
                       </span>
                     </div>
                   </div>
@@ -699,9 +768,9 @@ function ProfilePageContent() {
 
                 <div className="mt-6 grid gap-4 md:grid-cols-2">
                   <IdentityCard
-                    title="Competitive name"
+                    title="Name"
                     value={confirmedName}
-                    meta={profile?.inGameName ? "Replay-backed" : "Waiting for first confirmed replay"}
+                    meta={profile?.inGameName ? "Replay proof" : "Needs replay"}
                   />
                   <IdentityCard
                     title="Steam"
@@ -721,10 +790,9 @@ function ProfilePageContent() {
                     <Trophy className="h-4 w-4" />
                     Title Identity
                   </div>
-                  <h2 className="mt-2 text-xl font-semibold text-white">Set your title lanes.</h2>
+                  <h2 className="mt-2 text-xl font-semibold text-white">Title lanes</h2>
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-                    National belts use Representing Country. Women&apos;s Champion eligibility uses Gender Division.
-                    More nations are coming.
+                    Country and division power title eligibility.
                   </p>
                 </div>
                 <Link
@@ -899,34 +967,57 @@ function ProfilePageContent() {
             </div>
           </div>
 
-          <div className="min-w-0 rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5">
+          <div className="min-w-0 space-y-4">
+            <div className="min-w-0 rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5">
             <div className="flex items-center gap-2 text-xs uppercase tracking-[0.32em] text-amber-100/70">
               <ShieldCheck className="h-4 w-4" />
               Watcher
             </div>
-            <h2 className="mt-3 text-2xl font-semibold">Pair fast. Play clean.</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-300">
-              Mint a fresh key, hand it to the desktop app, and keep replay proof flowing.
-            </p>
+            {isBasicProfileView ? (
+              <>
+                <h2 className="mt-3 text-2xl font-semibold">Pair fast. Play clean.</h2>
+                <p className="mt-3 text-sm leading-6 text-slate-300">
+                  Mint a fresh key, hand it to the desktop app, and keep replay proof flowing.
+                </p>
 
-            <div className="mt-5 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => void createWatcherKey({ pairToWatcher: true })}
-                disabled={mintingWatcherKey}
-                className="rounded-full bg-amber-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {mintingWatcherKey ? "Pairing..." : "Pair Watcher"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void createWatcherKey()}
-                disabled={mintingWatcherKey}
-                className="rounded-full border border-white/15 px-5 py-3 text-sm text-white/85 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                Mint Key
-              </button>
-            </div>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void createWatcherKey({ pairToWatcher: true })}
+                    disabled={mintingWatcherKey}
+                    className="rounded-full bg-amber-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {mintingWatcherKey ? "Pairing..." : "Pair Watcher"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void createWatcherKey()}
+                    disabled={mintingWatcherKey}
+                    className="rounded-full border border-white/15 px-5 py-3 text-sm text-white/85 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    Mint Key
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <ProfileIconAction
+                  icon={Link2}
+                  label={mintingWatcherKey ? "Pairing" : "Pair"}
+                  onClick={() => void createWatcherKey({ pairToWatcher: true })}
+                  disabled={mintingWatcherKey}
+                  primary
+                />
+                <ProfileIconAction
+                  icon={KeyRound}
+                  label="Mint"
+                  onClick={() => void createWatcherKey()}
+                  disabled={mintingWatcherKey}
+                />
+                <ProfileIconAction icon={Download} label="App" href="/download" />
+                <ProfileIconAction icon={Upload} label="Replay" href="/upload" />
+              </div>
+            )}
 
             {watcherPairIntent ? (
               <div className="mt-4 rounded-2xl border border-emerald-300/20 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">
@@ -937,7 +1028,7 @@ function ProfilePageContent() {
             {newWatcherKey ? (
               <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4">
                 <div className="text-xs uppercase tracking-[0.24em] text-amber-100/80">
-                  Fresh fallback key
+                  Fresh key
                 </div>
                 <div className="mt-2 break-all rounded-xl bg-black/20 px-3 py-3 font-mono text-sm text-white">
                   {newWatcherKey}
@@ -962,26 +1053,33 @@ function ProfilePageContent() {
               </div>
             ) : (
               <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
-                No watcher keys minted yet.
+                No keys yet.
               </div>
             )}
 
-            <div className="mt-5 flex flex-wrap gap-3">
-              <Link
-                href="/download"
-                className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white/85 transition hover:border-white/30 hover:text-white"
-              >
-                Download Watcher
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-              <Link
-                href="/upload"
-                className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white/85 transition hover:border-white/30 hover:text-white"
-              >
-                Upload Replay
-                <Upload className="h-4 w-4" />
-              </Link>
+            {isBasicProfileView ? (
+              <div className="mt-5 flex flex-wrap gap-3">
+                <Link
+                  href="/download"
+                  className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white/85 transition hover:border-white/30 hover:text-white"
+                >
+                  Download Watcher
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+                <Link
+                  href="/upload"
+                  className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white/85 transition hover:border-white/30 hover:text-white"
+                >
+                  Upload Replay
+                  <Upload className="h-4 w-4" />
+                </Link>
+              </div>
+            ) : null}
             </div>
+
+            {!isBasicProfileView && canUseApprenticeshipAdmin ? (
+              <ApprenticeshipAdminTile currentAvatarUrl={profile?.avatarUrl || "/champions/players/silhouette.webp"} />
+            ) : null}
           </div>
         </div>
       </section>
@@ -1406,9 +1504,576 @@ function IdentityCard({
   );
 }
 
+function ProfileModeToggle({
+  value,
+  onChange,
+}: {
+  value: ProfileViewMode;
+  onChange: (value: ProfileViewMode) => void;
+}) {
+  return (
+    <div className="grid grid-cols-3 overflow-hidden rounded-full border border-white/10 bg-black/24 p-1">
+      {PROFILE_VIEW_MODES.map((mode) => {
+        const active = value === mode.key;
+        return (
+          <button
+            key={mode.key}
+            type="button"
+            onClick={() => onChange(mode.key)}
+            className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
+              active
+                ? "bg-amber-300 text-slate-950 shadow-[0_10px_28px_rgba(251,191,36,0.22)]"
+                : "text-slate-400 hover:bg-white/[0.06] hover:text-white"
+            }`}
+          >
+            {mode.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProfileIconAction({
+  icon: Icon,
+  label,
+  href,
+  onClick,
+  disabled,
+  primary = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  href?: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  primary?: boolean;
+}) {
+  const className = `flex min-h-[4.4rem] flex-col items-center justify-center gap-2 rounded-2xl border px-3 py-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+    primary
+      ? "border-amber-200/25 bg-amber-300 text-slate-950 hover:bg-amber-200"
+      : "border-white/10 bg-slate-950/36 text-slate-200 hover:border-amber-200/30 hover:bg-amber-300/10 hover:text-amber-100"
+  }`;
+
+  const content = (
+    <>
+      <Icon className="h-5 w-5" />
+      <span>{label}</span>
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className={className}>
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} className={className}>
+      {content}
+    </button>
+  );
+}
+
+function ApprenticeshipAdminTile({ currentAvatarUrl }: { currentAvatarUrl: string }) {
+  const admins = [
+    {
+      name: "Emaren",
+      avatarUrl: currentAvatarUrl || "/api/media-assets/avatar/emaren",
+    },
+    {
+      name: "Zodiac",
+      avatarUrl: "/api/media-assets/avatar/user-u-06c16d39d25c476fac2c86fee7b4d189",
+    },
+  ];
+
+  return (
+    <div className="overflow-hidden rounded-[1.6rem] border border-amber-200/16 bg-[radial-gradient(circle_at_100%_0%,rgba(251,191,36,0.16),transparent_32%),linear-gradient(145deg,rgba(255,255,255,0.05),rgba(255,255,255,0.018))] p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.3em] text-amber-100/75">
+          <Crown className="h-4 w-4" />
+          Apprenticeship Admin
+        </div>
+        <ShieldCheck className="h-5 w-5 text-amber-200" />
+      </div>
+
+      <div className="mt-4 grid gap-2">
+        {admins.map((admin) => (
+          <div
+            key={admin.name}
+            className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/36 p-2.5"
+          >
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="h-12 w-12 overflow-hidden rounded-xl border border-amber-200/18 bg-black/30">
+                <img src={admin.avatarUrl} alt="" className="h-full w-full object-cover object-top" />
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-white">{admin.name}</div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-amber-100/72">
+                  <ShieldCheck className="h-3 w-3" />
+                  Admin
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Link
+        href="/zodiac"
+        className="mt-3 flex items-center justify-center gap-2 rounded-2xl border border-amber-200/28 bg-amber-300/10 px-4 py-3 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/16"
+      >
+        Zodiac Control
+        <ExternalLink className="h-4 w-4" />
+      </Link>
+    </div>
+  );
+}
+
+
+
+function ExtremeProfileView({
+  profile,
+  uid,
+  displayName,
+  confirmedName,
+  profileViewMode,
+  setProfileViewMode,
+  avatarUploading,
+  avatarSavingTarget,
+  onPreset,
+  onUpload,
+  mintingWatcherKey,
+  onPairWatcher,
+  onMintKey,
+  watcherPairIntent,
+  newWatcherKey,
+  latestWatcherKey,
+  canUseApprenticeshipAdmin,
+}: {
+  profile: ProfileResponse | null;
+  uid?: string | null;
+  displayName: string;
+  confirmedName: string;
+  profileViewMode: ProfileViewMode;
+  setProfileViewMode: (value: ProfileViewMode) => void;
+  avatarUploading: boolean;
+  avatarSavingTarget: string | null;
+  onPreset: (target: string) => void;
+  onUpload: (file: File | null) => void;
+  mintingWatcherKey: boolean;
+  onPairWatcher: () => void;
+  onMintKey: () => void;
+  watcherPairIntent: boolean;
+  newWatcherKey: string | null;
+  latestWatcherKey: WatcherKeyRow | null;
+  canUseApprenticeshipAdmin: boolean;
+}) {
+  const avatarUrl = profile?.avatarUrl || "/champions/players/silhouette.webp";
+  const avatarOptions = profile?.avatarOptions ?? [];
+  const visibleOptions = avatarOptions.slice(0, 10);
+  const steamId = (profile as { steamId?: string } | null)?.steamId;
+  const verificationLevel = profile?.verificationLevel ?? 0;
+  const earningWoloPerDay = profile?.earningWoloPerDay ?? 0;
+  const proofLabel = profile?.inGameName ? "Replay proof" : "Needs replay";
+  const latestKeyLabel = newWatcherKey || latestWatcherKey?.prefix || "No key";
+  const profileTitle = earningWoloPerDay > 0 ? "Active tribute" : "Unranked tribute";
+
+  return (
+    <div className="mx-auto w-full max-w-[96rem] space-y-5 py-6 text-white">
+      <section className="relative isolate overflow-hidden rounded-[2.35rem] border border-amber-200/15 bg-slate-950 shadow-[0_28px_120px_rgba(0,0,0,0.38)]">
+        <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_18%_8%,rgba(251,191,36,0.18),transparent_28%),radial-gradient(circle_at_82%_0%,rgba(59,130,246,0.20),transparent_34%),linear-gradient(135deg,rgba(15,23,42,0.98),rgba(2,6,23,0.98)_54%,rgba(0,0,0,0.96))]" />
+        <div className="absolute inset-x-0 top-0 -z-10 h-44 bg-gradient-to-b from-white/[0.055] to-transparent" />
+        <div className="absolute bottom-0 right-0 -z-10 h-72 w-72 rounded-full bg-amber-300/10 blur-3xl" />
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-2xl border border-amber-200/20 bg-amber-300/10 text-amber-100">
+              <Crown className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] font-black uppercase tracking-[0.32em] text-amber-100/60">Extreme Profile</div>
+              <div className="truncate text-sm font-semibold text-white/92">Warrior identity</div>
+            </div>
+          </div>
+
+          <ProfileModeToggle value={profileViewMode} onChange={setProfileViewMode} />
+        </div>
+
+        <div className="grid gap-0 xl:grid-cols-[minmax(0,1.08fr)_minmax(24rem,0.55fr)]">
+          <div className="grid min-w-0 gap-0 lg:grid-cols-[minmax(20rem,0.46fr)_minmax(0,0.54fr)]">
+            <ExtremeAvatarStage
+              avatarUrl={avatarUrl}
+              displayName={displayName}
+              options={visibleOptions}
+              uploading={avatarUploading}
+              savingTarget={avatarSavingTarget}
+              onPreset={onPreset}
+              onUpload={onUpload}
+            />
+
+            <div className="flex min-w-0 flex-col justify-between border-t border-white/10 p-5 sm:p-7 lg:border-l lg:border-t-0">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <ExtremeChip icon={BadgeCheck} label={proofLabel} tone="emerald" />
+                  <ExtremeChip icon={ShieldCheck} label={`Lv ${verificationLevel}`} tone="blue" />
+                  <ExtremeChip icon={Coins} label={`${earningWoloPerDay} / day`} tone="amber" />
+                </div>
+
+                <h1 className="mt-6 break-words text-5xl font-black tracking-[-0.055em] text-white sm:text-6xl xl:text-7xl">
+                  {displayName}
+                </h1>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-xs font-semibold text-slate-200">
+                    {confirmedName}
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-black/24 px-3 py-1.5 font-mono text-[11px] text-slate-300">
+                    UID {uid ? truncateUid(uid) : "—"}
+                  </span>
+                </div>
+
+                <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <ExtremeStat icon={Trophy} label="Title" value={profileTitle} />
+                  <ExtremeStat icon={Monitor} label="Steam" value={steamId ? "Linked" : "Open"} />
+                  <ExtremeStat icon={KeyRound} label="Key" value={latestKeyLabel} mono />
+                  <ExtremeStat icon={Gem} label="WOLO" value={`${earningWoloPerDay}`} />
+                </div>
+              </div>
+
+              <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <ExtremeAction icon={Link2} label={mintingWatcherKey ? "Pairing" : "Pair"} onClick={onPairWatcher} primary disabled={mintingWatcherKey} />
+                <ExtremeAction icon={KeyRound} label="Mint" onClick={onMintKey} disabled={mintingWatcherKey} />
+                <ExtremeAction icon={Download} label="App" href="/download" />
+                <ExtremeAction icon={Upload} label="Replay" href="/upload" />
+              </div>
+            </div>
+          </div>
+
+          <aside className="grid gap-4 border-t border-white/10 p-5 sm:p-6 xl:border-l xl:border-t-0">
+            <ExtremePrestigeCard earningWoloPerDay={earningWoloPerDay} proofLabel={proofLabel} />
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              <ExtremeCompactCard icon={ShieldCheck} title="Watcher" value={watcherPairIntent ? "Pairing" : latestKeyLabel} />
+              <ExtremeCompactCard icon={Monitor} title="Steam" value={steamId ? steamId : "Not linked"} mono={Boolean(steamId)} />
+            </div>
+
+            {canUseApprenticeshipAdmin ? (
+              <ApprenticeshipAdminTile currentAvatarUrl={avatarUrl} />
+            ) : null}
+          </aside>
+        </div>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(22rem,0.45fr)]">
+        <div className="rounded-[2rem] border border-white/10 bg-slate-950/72 p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)] sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.28em] text-amber-100/70">
+              <Trophy className="h-4 w-4" />
+              Title lanes
+            </div>
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+              eligibility
+            </span>
+          </div>
+
+          <div className="mt-4">
+            <ProfileTitleInventory profile={profile} />
+          </div>
+        </div>
+
+        <div className="rounded-[2rem] border border-white/10 bg-slate-950/72 p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)] sm:p-6">
+          <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.28em] text-emerald-100/70">
+            <Coins className="h-4 w-4" />
+            Wallet rail
+          </div>
+
+          <div className="mt-5 grid gap-3">
+            <ExtremeRailLink href="/wallet" icon={Coins} label="Wallet" value="Open" />
+            <ExtremeRailLink href="/staking" icon={Gem} label="Staking" value="Rewards" />
+            <ExtremeRailLink href="/players" icon={UserRound} label="Players" value="Board" />
+            <ExtremeRailLink href="/war-chest" icon={Trophy} label="War Chest" value="WOLO" />
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ExtremeChip({
+  icon: Icon,
+  label,
+  tone,
+}: {
+  icon: LucideIcon;
+  label: string;
+  tone: "amber" | "blue" | "emerald";
+}) {
+  const toneClass =
+    tone === "amber"
+      ? "border-amber-200/20 bg-amber-300/10 text-amber-100"
+      : tone === "blue"
+        ? "border-sky-300/20 bg-sky-400/10 text-sky-100"
+        : "border-emerald-300/20 bg-emerald-400/10 text-emerald-100";
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold ${toneClass}`}>
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </span>
+  );
+}
+
+function ExtremeAvatarStage({
+  avatarUrl,
+  displayName,
+  options,
+  uploading,
+  savingTarget,
+  onPreset,
+  onUpload,
+}: {
+  avatarUrl: string;
+  displayName: string;
+  options: ProfileResponse["avatarOptions"];
+  uploading: boolean;
+  savingTarget: string | null;
+  onPreset: (target: string) => void;
+  onUpload: (file: File | null) => void;
+}) {
+  return (
+    <div className="relative min-w-0 p-4 sm:p-6">
+      <div className="overflow-hidden rounded-[2rem] border border-amber-200/22 bg-black/36 shadow-[0_26px_90px_rgba(0,0,0,0.38)]">
+        <div className="relative aspect-[0.86/1] min-h-[25rem]">
+          <img src={avatarUrl} alt={`${displayName} avatar`} className="h-full w-full object-cover object-top" />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black via-black/35 to-transparent" />
+          <div className="absolute bottom-4 left-4 right-4">
+            <div className="flex items-end justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-100/64">Selected warrior</div>
+                <div className="mt-1 truncate text-2xl font-black text-white">{displayName}</div>
+              </div>
+              <BadgeCheck className="h-7 w-7 shrink-0 text-amber-200" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-5 gap-2">
+        {options.map((option) => {
+          const active =
+            avatarUrl === option.url ||
+            avatarUrl.includes(`/avatar/${option.target}`) ||
+            avatarUrl.includes(option.target);
+
+          return (
+            <button
+              key={option.target}
+              type="button"
+              onClick={() => onPreset(option.target)}
+              disabled={uploading || Boolean(savingTarget)}
+              className={`relative aspect-square overflow-hidden rounded-2xl border bg-black/30 transition disabled:cursor-not-allowed disabled:opacity-55 ${
+                active
+                  ? "border-amber-200/80 shadow-[0_0_0_1px_rgba(251,191,36,0.35),0_14px_38px_rgba(251,191,36,0.14)]"
+                  : "border-white/10 hover:border-amber-200/42"
+              }`}
+              title={savingTarget === option.target ? "Saving..." : option.label}
+            >
+              <img src={option.url} alt="" className="h-full w-full object-cover object-top" />
+              {active ? (
+                <span className="absolute right-1.5 top-1.5 rounded-full bg-amber-300 p-0.5 text-slate-950">
+                  <BadgeCheck className="h-3 w-3" />
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+
+      <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-amber-200/18 bg-amber-300/10 px-3 py-3 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/16">
+        <ImagePlus className="h-4 w-4" />
+        {uploading ? "Uploading..." : "Upload"}
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="hidden"
+          disabled={uploading}
+          onChange={(event) => {
+            const file = event.target.files?.[0] ?? null;
+            onUpload(file);
+            event.target.value = "";
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
+function ExtremeStat({
+  icon: Icon,
+  label,
+  value,
+  mono = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-slate-500">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </div>
+      <div className={`mt-2 truncate text-sm font-black text-white ${mono ? "font-mono" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+function ExtremeAction({
+  icon: Icon,
+  label,
+  href,
+  onClick,
+  disabled,
+  primary = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  href?: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  primary?: boolean;
+}) {
+  const className = `flex min-h-[4.9rem] flex-col items-center justify-center gap-2 rounded-2xl border px-3 py-3 text-xs font-black uppercase tracking-[0.14em] transition disabled:cursor-not-allowed disabled:opacity-60 ${
+    primary
+      ? "border-amber-200/25 bg-amber-300 text-slate-950 hover:bg-amber-200"
+      : "border-white/10 bg-white/[0.045] text-slate-200 hover:border-amber-200/30 hover:bg-amber-300/10 hover:text-amber-100"
+  }`;
+
+  const content = (
+    <>
+      <Icon className="h-5 w-5" />
+      {label}
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className={className}>
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} className={className}>
+      {content}
+    </button>
+  );
+}
+
+function ExtremePrestigeCard({
+  earningWoloPerDay,
+  proofLabel,
+}: {
+  earningWoloPerDay: number;
+  proofLabel: string;
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-[1.7rem] border border-amber-200/18 bg-[radial-gradient(circle_at_50%_0%,rgba(251,191,36,0.18),transparent_38%),linear-gradient(145deg,rgba(255,255,255,0.055),rgba(255,255,255,0.02))] p-5">
+      <div className="absolute -right-10 -top-12 h-40 w-40 rounded-full bg-amber-300/10 blur-3xl" />
+      <div className="relative flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.28em] text-amber-100/70">
+          <Trophy className="h-4 w-4" />
+          Prestige
+        </div>
+        <Crown className="h-5 w-5 text-amber-200" />
+      </div>
+
+      <div className="relative mt-6">
+        <div className="text-4xl font-black tracking-[-0.045em] text-white">
+          {earningWoloPerDay > 0 ? `${earningWoloPerDay}` : "—"}
+        </div>
+        <div className="mt-1 text-[10px] font-black uppercase tracking-[0.26em] text-amber-100/62">WOLO / day</div>
+      </div>
+
+      <div className="relative mt-5 grid grid-cols-2 gap-2">
+        <div className="rounded-2xl border border-white/10 bg-black/24 p-3">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Proof</div>
+          <div className="mt-1 text-sm font-semibold text-white">{proofLabel}</div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-black/24 p-3">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Mode</div>
+          <div className="mt-1 text-sm font-semibold text-amber-100">Extreme</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExtremeCompactCard({
+  icon: Icon,
+  title,
+  value,
+  mono = false,
+}: {
+  icon: LucideIcon;
+  title: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="rounded-[1.35rem] border border-white/10 bg-white/[0.04] p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">
+          <Icon className="h-4 w-4" />
+          {title}
+        </div>
+      </div>
+      <div className={`mt-3 truncate text-sm font-semibold text-white ${mono ? "font-mono" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+function ExtremeRailLink({
+  href,
+  icon: Icon,
+  label,
+  value,
+}: {
+  href: string;
+  icon: LucideIcon;
+  label: string;
+  value: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 transition hover:border-amber-200/26 hover:bg-amber-300/10"
+    >
+      <span className="flex min-w-0 items-center gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-black/24 text-amber-100">
+          <Icon className="h-4 w-4" />
+        </span>
+        <span className="truncate text-sm font-semibold text-white">{label}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-2 text-xs font-semibold text-slate-400">
+        {value}
+        <ArrowUpRight className="h-4 w-4" />
+      </span>
+    </Link>
+  );
+}
+
+
 function ProfileAvatarPanel({
   profile,
   displayName,
+  viewMode,
   uploading,
   savingTarget,
   onPreset,
@@ -1416,6 +2081,7 @@ function ProfileAvatarPanel({
 }: {
   profile: ProfileResponse | null;
   displayName: string;
+  viewMode: "basic" | "advanced";
   uploading: boolean;
   savingTarget: string | null;
   onPreset: (target: string) => void;
@@ -1423,36 +2089,119 @@ function ProfileAvatarPanel({
 }) {
   const avatarUrl = profile?.avatarUrl || "/champions/players/silhouette.webp";
   const options = profile?.avatarOptions ?? [];
+  const visibleOptions = options.slice(0, 8);
+
+  if (viewMode === "basic") {
+    return (
+      <div className="rounded-[1.5rem] border border-amber-200/12 bg-[linear-gradient(135deg,rgba(255,255,255,0.05),rgba(255,255,255,0.018))] p-4">
+        <div className="relative mx-auto aspect-[0.78/1] w-full max-w-[10.5rem] overflow-hidden rounded-[1.35rem] border border-amber-200/16 bg-black/30">
+          <img
+            src={avatarUrl}
+            alt={`${displayName} avatar`}
+            className="h-full w-full object-cover object-top"
+          />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/72 to-transparent" />
+        </div>
+
+        <div className="mt-4 grid grid-cols-5 gap-1.5">
+          {options.map((option) => (
+            <button
+              key={option.target}
+              type="button"
+              onClick={() => onPreset(option.target)}
+              disabled={uploading || Boolean(savingTarget)}
+              className="relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-black/20 transition hover:border-amber-200/35 disabled:cursor-not-allowed disabled:opacity-55"
+              title={savingTarget === option.target ? "Saving..." : option.label}
+            >
+              <img src={option.url} alt="" className="h-full w-full object-cover object-top" />
+            </button>
+          ))}
+        </div>
+
+        <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-full border border-amber-200/18 px-3 py-2 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/10">
+          <ImagePlus className="h-4 w-4" />
+          {uploading ? "Uploading..." : "Upload Avatar"}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="hidden"
+            disabled={uploading}
+            onChange={(event) => {
+              const file = event.target.files?.[0] ?? null;
+              onUpload(file);
+              event.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+    );
+  }
 
   return (
-    <div className="rounded-[1.5rem] border border-amber-200/12 bg-[linear-gradient(135deg,rgba(255,255,255,0.05),rgba(255,255,255,0.018))] p-4">
-      <div className="relative mx-auto aspect-[0.78/1] w-full max-w-[10.5rem] overflow-hidden rounded-[1.35rem] border border-amber-200/16 bg-black/30">
-        <img
-          src={avatarUrl}
-          alt={`${displayName} avatar`}
-          className="h-full w-full object-cover object-top"
-        />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/72 to-transparent" />
+    <div className="overflow-hidden rounded-[1.65rem] border border-amber-200/18 bg-[radial-gradient(circle_at_50%_0%,rgba(251,191,36,0.14),transparent_34%),linear-gradient(145deg,rgba(255,255,255,0.055),rgba(255,255,255,0.018))] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.25)]">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.28em] text-amber-100/75">
+          <UserRound className="h-4 w-4" />
+          Avatar
+        </div>
+        <div className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold text-slate-300">
+          {visibleOptions.length || 1}/{Math.max(options.length, visibleOptions.length || 1)}
+        </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-5 gap-1.5">
-        {options.map((option) => (
-          <button
-            key={option.target}
-            type="button"
-            onClick={() => onPreset(option.target)}
-            disabled={uploading || Boolean(savingTarget)}
-            className="relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-black/20 transition hover:border-amber-200/35 disabled:cursor-not-allowed disabled:opacity-55"
-            title={savingTarget === option.target ? "Saving..." : option.label}
-          >
-            <img src={option.url} alt="" className="h-full w-full object-cover object-top" />
-          </button>
-        ))}
+      <div className="mt-4 overflow-hidden rounded-[1.35rem] border border-amber-200/24 bg-black/35">
+        <div className="relative mx-auto aspect-[0.86/1] max-h-[18rem] w-full">
+          <img
+            src={avatarUrl}
+            alt={`${displayName} avatar`}
+            className="h-full w-full object-cover object-top"
+          />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/86 via-black/25 to-transparent" />
+          <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-black text-white">{displayName}</div>
+              <div className="mt-0.5 text-[9px] uppercase tracking-[0.22em] text-amber-100/65">Selected</div>
+            </div>
+            <BadgeCheck className="h-5 w-5 shrink-0 text-amber-200" />
+          </div>
+        </div>
       </div>
 
-      <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-full border border-amber-200/18 px-3 py-2 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/10">
+      {visibleOptions.length > 0 ? (
+        <div className="mt-3 grid grid-cols-4 gap-2">
+          {visibleOptions.map((option) => {
+            const active =
+              avatarUrl === option.url ||
+              avatarUrl.includes(`/avatar/${option.target}`) ||
+              avatarUrl.includes(option.target);
+            return (
+              <button
+                key={option.target}
+                type="button"
+                onClick={() => onPreset(option.target)}
+                disabled={uploading || Boolean(savingTarget)}
+                className={`relative aspect-square overflow-hidden rounded-2xl border bg-black/25 transition disabled:cursor-not-allowed disabled:opacity-55 ${
+                  active
+                    ? "border-amber-200/75 shadow-[0_0_0_1px_rgba(251,191,36,0.32),0_12px_35px_rgba(251,191,36,0.14)]"
+                    : "border-white/10 hover:border-amber-200/38"
+                }`}
+                title={savingTarget === option.target ? "Saving..." : option.label}
+              >
+                <img src={option.url} alt="" className="h-full w-full object-cover object-top" />
+                {active ? (
+                  <span className="absolute right-1.5 top-1.5 rounded-full bg-amber-300 p-0.5 text-slate-950">
+                    <BadgeCheck className="h-3 w-3" />
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-amber-200/18 bg-amber-300/10 px-3 py-2.5 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/16">
         <ImagePlus className="h-4 w-4" />
-        {uploading ? "Uploading..." : "Upload Avatar"}
+        {uploading ? "Uploading..." : "Upload"}
         <input
           type="file"
           accept="image/png,image/jpeg,image/webp,image/gif"

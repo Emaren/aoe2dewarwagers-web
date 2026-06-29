@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type RefObject,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -23,10 +24,84 @@ import { displayName } from "@/components/lobby/utils";
 import type { AiVisibilityOption } from "@/lib/aiConciergeConfig";
 import AutoGrowTextarea from "@/components/ui/AutoGrowTextarea";
 import { LOBBY_MESSAGE_MAX_CHARS } from "@/lib/lobby";
-import { LOBBY_MESSAGE_REACTIONS } from "@/lib/lobbyReactionConfig";
 import { avatarThumbUrlForUser } from "@/lib/avatarAssets";
 
 const TYPING_HUD_MODE_STORAGE_KEY = "aoe2war:typing-hud-mode";
+
+type ChatAudienceMember = {
+  uid: string;
+  name: string;
+  aliases: string[];
+  avatarSrc: string;
+  latestAt: string;
+  messageCount: number;
+};
+
+function normalizedChatToken(value: string | null | undefined) {
+  return (value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_\[\]\-\s]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function uniqueChatAliases(...values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const aliases: string[] = [];
+
+  for (const value of values) {
+    const normalized = normalizedChatToken(value);
+    if (!normalized || normalized.length < 2 || seen.has(normalized)) continue;
+
+    seen.add(normalized);
+    aliases.push(normalized);
+
+    for (const part of normalized.split(" ")) {
+      if (part.length >= 3 && !seen.has(part)) {
+        seen.add(part);
+        aliases.push(part);
+      }
+    }
+  }
+
+  return aliases;
+}
+
+const CHAT_AUDIENCE_PRESETS: ChatAudienceMember[] = [
+  {
+    uid: "preset:emaren",
+    name: "Emaren",
+    aliases: uniqueChatAliases("Emaren"),
+    avatarSrc: avatarThumbUrlForUser("preset:emaren", "Emaren"),
+    latestAt: "1970-01-01T00:00:00.000Z",
+    messageCount: 0,
+  },
+  {
+    uid: "preset:sniper",
+    name: "Sniper",
+    aliases: uniqueChatAliases("Sniper"),
+    avatarSrc: avatarThumbUrlForUser("preset:sniper", "Sniper"),
+    latestAt: "1970-01-01T00:00:00.000Z",
+    messageCount: 0,
+  },
+  {
+    uid: "preset:jim",
+    name: "Jim",
+    aliases: uniqueChatAliases("Jim"),
+    avatarSrc: avatarThumbUrlForUser("preset:jim", "Jim"),
+    latestAt: "1970-01-01T00:00:00.000Z",
+    messageCount: 0,
+  },
+  {
+    uid: "preset:zodiac",
+    name: "Zodiac",
+    aliases: uniqueChatAliases("Zodiac"),
+    avatarSrc: avatarThumbUrlForUser("preset:zodiac", "Zodiac"),
+    latestAt: "1970-01-01T00:00:00.000Z",
+    messageCount: 0,
+  },
+];
+
 
 type LobbyChatProps = {
   style?: CSSProperties;
@@ -36,6 +111,7 @@ type LobbyChatProps = {
   messagesCount: number;
   chatItems: ChatRenderItem[];
   chatScrollRef: RefObject<HTMLDivElement | null>;
+  onLoadOlderMessages?: () => void;
   chatError: string | null;
   chatNotice: string | null;
   isAuthenticated: boolean;
@@ -70,10 +146,10 @@ export function LobbyChat(props: LobbyChatProps) {
     style,
     themeKey,
     viewMode,
-    chatRoomTitle,
     messagesCount,
     chatItems,
     chatScrollRef,
+    onLoadOlderMessages,
     chatError,
     chatNotice,
     isAuthenticated,
@@ -104,10 +180,162 @@ export function LobbyChat(props: LobbyChatProps) {
   const tone = getLobbyPresentationTone(themeKey, viewMode);
   const isExtreme = surface === "extreme";
   const [showChatJump, setShowChatJump] = useState(false);
+  const lastChatViewportScrollTopRef = useRef(0);
+  const [selectedChatAudienceUids, setSelectedChatAudienceUids] = useState<string[]>([]);
+  const [chatFilterDockVisible, setChatFilterDockVisible] = useState(false);
   const [typingHudMode, setTypingHudMode] = useState<"steady" | "pulse">("steady");
   const [ownTypingPulse, setOwnTypingPulse] = useState(false);
   const ownTypingPulseTimerRef = useRef<number | null>(null);
   const lastMessageBodyForTypingPulseRef = useRef(messageBody);
+
+  const chatAudience = useMemo(() => {
+    const audience = new Map<string, ChatAudienceMember>();
+
+    for (const item of chatItems) {
+      if (item.type !== "message") continue;
+      if (item.message.user.isAi) continue;
+
+      const uid = item.message.user.uid;
+      if (!uid) continue;
+
+      const name =
+        displayName(item.message.user.inGameName, item.message.user.steamPersonaName) || "Player";
+      const aliases = uniqueChatAliases(
+        name,
+        item.message.user.inGameName,
+        item.message.user.steamPersonaName,
+        uid
+      );
+
+      const existing = audience.get(uid);
+      if (existing) {
+        existing.messageCount += 1;
+
+        if (new Date(item.message.createdAt).getTime() > new Date(existing.latestAt).getTime()) {
+          existing.latestAt = item.message.createdAt;
+        }
+
+        continue;
+      }
+
+      audience.set(uid, {
+        uid,
+        name,
+        aliases,
+        avatarSrc: avatarThumbUrlForUser(uid, name),
+        latestAt: item.message.createdAt,
+        messageCount: 1,
+      });
+    }
+
+    for (const preset of CHAT_AUDIENCE_PRESETS) {
+      const existing = Array.from(audience.values()).find((member) =>
+        member.aliases.some((alias) => preset.aliases.includes(alias))
+      );
+
+      if (!existing) {
+        audience.set(preset.uid, preset);
+      }
+    }
+
+    return Array.from(audience.values()).sort((left, right) => {
+      const leftPreset = left.uid.startsWith("preset:");
+      const rightPreset = right.uid.startsWith("preset:");
+
+      if (leftPreset !== rightPreset) {
+        return leftPreset ? 1 : -1;
+      }
+
+      const latestDelta = new Date(right.latestAt).getTime() - new Date(left.latestAt).getTime();
+      return latestDelta !== 0 ? latestDelta : left.name.localeCompare(right.name);
+    });
+  }, [chatItems]);
+
+  useEffect(() => {
+    if (selectedChatAudienceUids.length === 0) return;
+
+    const available = new Set(chatAudience.map((member) => member.uid));
+    setSelectedChatAudienceUids((current) =>
+      current.filter((uid) => available.has(uid) || uid.startsWith("preset:"))
+    );
+  }, [chatAudience, selectedChatAudienceUids.length]);
+
+  const selectedChatAudience = useMemo(
+    () => chatAudience.filter((member) => selectedChatAudienceUids.includes(member.uid)),
+    [chatAudience, selectedChatAudienceUids]
+  );
+
+  const filteredChatItems = useMemo(() => {
+    if (selectedChatAudience.length === 0) return chatItems;
+
+    const selectedUids = new Set(selectedChatAudience.map((member) => member.uid));
+    const selectedAliases = selectedChatAudience.flatMap((member) => member.aliases);
+    const filtered: ChatRenderItem[] = [];
+    let pendingDivider: Extract<ChatRenderItem, { type: "divider" }> | null = null;
+
+    for (const item of chatItems) {
+      if (item.type === "divider") {
+        pendingDivider = item;
+        continue;
+      }
+
+      const body = normalizedChatToken(item.message.body);
+      const authorUid = item.message.user.uid;
+      const authorName =
+        displayName(item.message.user.inGameName, item.message.user.steamPersonaName) || "";
+      const authorAliases = uniqueChatAliases(
+        authorName,
+        item.message.user.inGameName,
+        item.message.user.steamPersonaName,
+        authorUid
+      );
+
+      const authoredBySelected =
+        (authorUid ? selectedUids.has(authorUid) : false) ||
+        selectedAliases.some((alias) => authorAliases.includes(alias));
+
+      const mentionsSelected = selectedAliases.some(
+        (alias) => alias.length >= 3 && body.includes(alias)
+      );
+
+      if (!authoredBySelected && !mentionsSelected) {
+        continue;
+      }
+
+      if (pendingDivider) {
+        filtered.push(pendingDivider);
+        pendingDivider = null;
+      }
+
+      filtered.push(item);
+    }
+
+    return filtered;
+  }, [chatItems, selectedChatAudience]);
+
+  const displayedMessagesCount = filteredChatItems.filter((item) => item.type === "message").length;
+
+  function toggleChatAudienceUid(uid: string) {
+    setSelectedChatAudienceUids((current) =>
+      current.includes(uid) ? current.filter((existing) => existing !== uid) : [...current, uid]
+    );
+  }
+
+  function handleChatShellClick(event: MouseEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    if (
+      target.closest(
+        '[data-chat-viewscreen="true"], [data-chat-input-zone="true"], button, a, input, textarea, select, [role="dialog"]'
+      )
+    ) {
+      return;
+    }
+
+    setChatFilterDockVisible((current) => !current);
+  }
+
 
   function pulseOwnTypingHud() {
     if (typeof window === "undefined") return;
@@ -143,6 +371,7 @@ export function LobbyChat(props: LobbyChatProps) {
     });
   }
 
+
   function updateChatJumpButton() {
     const viewport = chatScrollRef.current;
     if (!viewport) return;
@@ -166,8 +395,23 @@ export function LobbyChat(props: LobbyChatProps) {
   }
 
   function handleChatScroll() {
+    const viewport = chatScrollRef.current;
+
+    if (viewport) {
+      const currentTop = viewport.scrollTop;
+      const wasUserScrollingUp = currentTop < lastChatViewportScrollTopRef.current;
+
+      if (wasUserScrollingUp && currentTop <= 96) {
+        onLoadOlderMessages?.();
+      }
+
+      lastChatViewportScrollTopRef.current = currentTop;
+    }
+
     updateChatJumpButton();
   }
+
+
 
   const viewerName =
     playerName || displayName(currentUserInGameName, currentUserSteamPersonaName) || "You";
@@ -221,7 +465,8 @@ export function LobbyChat(props: LobbyChatProps) {
 
   return (
     <div
-      className={`flex h-[min(76dvh,46rem)] min-h-[28rem] w-full min-w-0 max-w-full flex-col overflow-hidden rounded-[1.75rem] border p-4 sm:h-[min(78dvh,48rem)] sm:min-h-[30rem] sm:p-5 lg:h-[min(78dvh,50rem)] lg:min-h-[32rem] lg:p-6 ${
+      onClick={handleChatShellClick}
+      className={`flex h-[min(76dvh,46rem)] min-h-[28rem] w-full min-w-0 max-w-full flex-col overflow-hidden rounded-[1.75rem] border p-4 sm:h-[min(78dvh,48rem)] sm:min-h-[30rem] sm:p-5 lg:h-full lg:min-h-0 lg:max-h-full lg:p-6 ${
         isExtreme
           ? "border-amber-200/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.045),rgba(255,255,255,0.018))] shadow-[0_26px_88px_rgba(0,0,0,0.28)]"
           : tone.panelShell
@@ -231,27 +476,84 @@ export function LobbyChat(props: LobbyChatProps) {
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className={`text-xs uppercase tracking-[0.35em] ${tone.eyebrow}`}>Chat</div>
-          <h3 className="mt-1.5 min-w-0 truncate whitespace-nowrap text-[clamp(1.35rem,4.8vw,2rem)] font-semibold leading-tight text-white">
-            {chatRoomTitle}
-          </h3>
         </div>
 
-        <div className={`shrink-0 rounded-full border px-3 py-1 text-xs ${tone.neutralPill}`}>
-          {messagesCount} recent
+        <div className={`shrink-0 rounded-full border border-white/[0.06] px-3 py-1 text-xs ${tone.neutralPill}`}>
+          {selectedChatAudienceUids.length > 0 ? `${displayedMessagesCount} shown` : `${messagesCount} recent`}
         </div>
       </div>
+
+      {chatFilterDockVisible && chatAudience.length > 0 ? (
+        <div className="mt-4 rounded-2xl border border-white/[0.055] bg-[#081322]/52 px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+          <div className="flex items-center justify-between gap-3">
+                        {selectedChatAudienceUids.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setSelectedChatAudienceUids([])}
+                className="rounded-full border border-white/[0.06] bg-white/[0.035] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+
+          <div className="mt-2.5 flex min-w-0 items-center gap-2 overflow-x-auto pb-0.5 pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {chatAudience.map((member) => {
+              const selected = selectedChatAudienceUids.includes(member.uid);
+
+              return (
+                <button
+                  key={member.uid}
+                  type="button"
+                  onClick={() => toggleChatAudienceUid(member.uid)}
+                  aria-pressed={selected}
+                  title={selected ? `Remove ${member.name} filter` : `Filter ${member.name}`}
+                  className={`group relative flex h-11 shrink-0 items-center gap-2 rounded-full border py-1 pl-1 pr-3 transition ${
+                    selected
+                      ? "border-amber-200/26 bg-amber-400/12 text-amber-50 shadow-[0_0_24px_rgba(251,191,36,0.12)]"
+                      : "border-white/[0.055] bg-white/[0.035] text-slate-300 hover:border-white/[0.11] hover:bg-white/[0.07] hover:text-white"
+                  }`}
+                >
+                  <span className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full bg-black/30 shadow-[0_0_0_1px_rgba(255,255,255,0.10)]">
+                    <Image
+                      src={member.avatarSrc}
+                      alt={member.name}
+                      fill
+                      unoptimized
+                      sizes="36px"
+                      className="object-cover object-top"
+                    />
+                  </span>
+
+                  <span className="max-w-[7.5rem] truncate text-[11px] font-semibold tracking-[0.08em]">
+                    {member.name}
+                  </span>
+
+                  <span
+                    className={`absolute right-1.5 top-1.5 h-2 w-2 rounded-full ${
+                      selected ? "bg-amber-300" : "bg-emerald-300/70"
+                    }`}
+                    aria-hidden="true"
+                  />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
 
       <div className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden">
         <div
           className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border p-3 sm:p-4 ${tone.insetPanel}`}
         >
-          <div ref={chatScrollRef} onScroll={handleChatScroll} className="min-h-0 min-w-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto pb-12 pr-1">
-            {chatItems.length === 0 ? (
+          <div ref={chatScrollRef} onScroll={handleChatScroll} className="min-h-0 min-w-0 flex-1 overscroll-contain space-y-2 overflow-x-hidden overflow-y-auto pb-12 pr-1">
+            {filteredChatItems.length === 0 ? (
               <div className={`rounded-xl border px-4 py-5 text-sm text-slate-300 ${tone.subduedCard}`}>
                 No messages yet. The first tournament chatter starts here.
               </div>
             ) : (
-              chatItems.map((item) =>
+              filteredChatItems.map((item) =>
                 item.type === "divider" ? (
                   <ChatDateDivider key={item.key} label={item.label} dividerClassName={tone.divider} />
                 ) : (
@@ -494,6 +796,16 @@ function AiVoicePill({
   );
 }
 
+const APPLE_STYLE_LOBBY_QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+const APPLE_STYLE_LOBBY_MORE_REACTIONS = [
+  "🔥", "👀", "🐐", "💀", "⚔️", "🏆", "👑", "✨",
+  "👏", "🤯", "🥶", "😎", "😭", "🤣", "😈", "🫡",
+  "🤝", "💪", "🙌", "🎯", "🧠", "🗿", "🚀", "💰",
+  "📜", "🏰", "🛡️", "🪓", "🐺", "🦅", "🍻", "🧙",
+  "🪄", "⚡", "🌎", "🫶",
+];
+
 function LobbyMessageCard({
   item,
   tone,
@@ -517,11 +829,8 @@ function LobbyMessageCard({
   onEditMessage: (messageId: number, body: string) => void;
   onDeleteMessage: (messageId: number) => void;
 }) {
-  const [pickerPinnedOpen, setPickerPinnedOpen] = useState(false);
-  const [pickerHovered, setPickerHovered] = useState(false);
-  const holdTimerRef = useRef<number | null>(null);
-  const hoverCloseTimerRef = useRef<number | null>(null);
-  const longPressTriggeredRef = useRef(false);
+  const [reactionDockOpen, setReactionDockOpen] = useState(false);
+  const [reactionMoreOpen, setReactionMoreOpen] = useState(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const isAi = item.message.user.isAi;
   const canManageMessage =
@@ -530,132 +839,70 @@ function LobbyMessageCard({
     displayName(item.message.user.inGameName, item.message.user.steamPersonaName) || "The AI Scribe";
   const authorName = displayName(item.message.user.inGameName, item.message.user.steamPersonaName) || aiLabel;
   const avatarSrc = avatarThumbUrlForUser(item.message.user.uid, authorName);
+  const isBusy = reactingMessageId === item.message.id || moderatingMessageId === item.message.id;
 
   useEffect(() => {
-    if (!pickerPinnedOpen || typeof document === "undefined") {
-      return;
-    }
+    if (!reactionDockOpen || typeof document === "undefined") return;
 
     const handlePointerDown = (event: PointerEvent) => {
       if (!cardRef.current?.contains(event.target as Node)) {
-        setPickerPinnedOpen(false);
+        setReactionDockOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setReactionDockOpen(false);
       }
     };
 
     document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [pickerPinnedOpen]);
+  }, [reactionDockOpen]);
 
   useEffect(() => {
-    return () => {
-      clearHoldTimer();
-      clearHoverCloseTimer();
-    };
-  }, []);
-
-  function clearHoldTimer() {
-    if (holdTimerRef.current) {
-      window.clearTimeout(holdTimerRef.current);
-      holdTimerRef.current = null;
+    if (!reactionDockOpen) {
+      setReactionMoreOpen(false);
     }
-  }
-
-  function clearHoverCloseTimer() {
-    if (hoverCloseTimerRef.current) {
-      window.clearTimeout(hoverCloseTimerRef.current);
-      hoverCloseTimerRef.current = null;
-    }
-  }
-
-  function prefersHover() {
-    return (
-      typeof window !== "undefined" &&
-      window.matchMedia("(hover: hover) and (pointer: fine)").matches
-    );
-  }
-
-  function beginLongPress(pointerType: string) {
-    if (pointerType === "mouse") return;
-    longPressTriggeredRef.current = false;
-    clearHoldTimer();
-    holdTimerRef.current = window.setTimeout(() => {
-      longPressTriggeredRef.current = true;
-      setPickerPinnedOpen(true);
-    }, 360);
-  }
-
-  function handleCardTap() {
-    if (prefersHover()) {
-      return;
-    }
-    if (longPressTriggeredRef.current) {
-      longPressTriggeredRef.current = false;
-      return;
-    }
-    setPickerPinnedOpen((current) => !current);
-  }
-
-  function handleDesktopHoverStart() {
-    if (!prefersHover()) return;
-    clearHoverCloseTimer();
-    setPickerHovered(true);
-  }
-
-  function handleDesktopHoverEnd() {
-    if (!prefersHover()) return;
-    clearHoverCloseTimer();
-    hoverCloseTimerRef.current = window.setTimeout(() => {
-      setPickerHovered(false);
-    }, 140);
-  }
+  }, [reactionDockOpen]);
 
   function handleReactionToggle(event: MouseEvent<HTMLButtonElement>, emoji: string) {
     event.stopPropagation();
     onToggleReaction(item.message.id, emoji);
-    setPickerPinnedOpen(false);
+    setReactionMoreOpen(false);
+    setReactionDockOpen(false);
   }
 
-  function handleReactionHandleClick(event: MouseEvent<HTMLButtonElement>) {
+  function handleReactionDockToggle(event: MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
-    clearHoverCloseTimer();
-    setPickerPinnedOpen((current) => !current);
+    setReactionDockOpen((current) => !current);
   }
 
   function handleEditClick(event: MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
     const nextBody = window.prompt("Edit lobby message", item.message.body);
-    if (nextBody === null) {
-      return;
-    }
+    if (nextBody === null) return;
     onEditMessage(item.message.id, nextBody);
-    setPickerPinnedOpen(false);
+    setReactionDockOpen(false);
   }
 
   function handleDeleteClick(event: MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
     const confirmed = window.confirm("Delete this lobby message?");
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
     onDeleteMessage(item.message.id);
-    setPickerPinnedOpen(false);
+    setReactionDockOpen(false);
   }
-
-  const pickerVisible = pickerPinnedOpen || pickerHovered;
 
   return (
     <div
       ref={cardRef}
-      className={`group relative overflow-hidden rounded-xl border px-4 py-4 ${tone.subduedCard}`}
-      onClick={handleCardTap}
-      onPointerDown={(event) => beginLongPress(event.pointerType)}
-      onPointerUp={clearHoldTimer}
-      onPointerCancel={clearHoldTimer}
-      onPointerLeave={clearHoldTimer}
-      onMouseEnter={handleDesktopHoverStart}
-      onMouseLeave={handleDesktopHoverEnd}
+      className={`relative rounded-xl border px-4 py-4 ${tone.subduedCard}`}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
@@ -674,7 +921,7 @@ function LobbyMessageCard({
           </div>
         </div>
 
-        <div className="text-xs text-slate-400">
+        <div className="shrink-0 text-xs text-slate-400">
           {formatLobbyMoment(item.message.createdAt)}
         </div>
       </div>
@@ -695,69 +942,84 @@ function LobbyMessageCard({
         ) : null}
       </div>
 
-      <p className="mt-3 text-sm leading-6 text-slate-200">{item.message.body}</p>
+      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-200">
+        {item.message.body}
+      </p>
 
-      <div className="mt-4 flex min-w-0 max-w-full flex-wrap items-center gap-2 overflow-x-hidden">
-        {item.message.reactions.map((reaction) => {
-          const tooltip =
-            isAuthenticated && (reaction.users.length > 0 || reaction.anonymousCount > 0)
-              ? formatReactionTooltip(reaction)
-              : undefined;
+      <div className="mt-4 flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5 pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {item.message.reactions.length > 0 ? (
+            item.message.reactions.map((reaction) => {
+              const tooltip =
+                isAuthenticated && (reaction.users.length > 0 || reaction.anonymousCount > 0)
+                  ? formatReactionTooltip(reaction)
+                  : undefined;
 
-          return (
-            <button
-              key={`${item.message.id}-${reaction.emoji}-summary`}
-              type="button"
-              onClick={(event) => handleReactionToggle(event, reaction.emoji)}
-              title={tooltip}
-              aria-pressed={reaction.viewerReacted}
-              disabled={reactingMessageId === item.message.id}
-              className={`inline-flex min-h-10 min-w-[3.55rem] items-center justify-center gap-1.5 rounded-full border px-4 py-2 text-[13px] font-medium transition ${
-                reaction.viewerReacted
-                  ? "border-amber-300/20 bg-amber-400/12 text-amber-100"
-                  : "border-white/10 bg-[#0c1524] text-slate-300 hover:border-white/18 hover:text-white"
-              } disabled:cursor-not-allowed disabled:opacity-60`}
-            >
-              <span>{reaction.emoji}</span>
-              <span>{reaction.count}</span>
-            </button>
-          );
-        })}
+              return (
+                <button
+                  key={`${item.message.id}-${reaction.emoji}-summary`}
+                  type="button"
+                  onClick={(event) => handleReactionToggle(event, reaction.emoji)}
+                  title={tooltip}
+                  aria-pressed={reaction.viewerReacted}
+                  disabled={reactingMessageId === item.message.id}
+                  className={`inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold transition ${
+                    reaction.viewerReacted
+                      ? "border-transparent bg-amber-400/14 text-amber-50 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.035)]"
+                      : "border-transparent bg-white/[0.035] text-slate-300 hover:border-transparent hover:bg-white/[0.075] hover:text-white"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  <span>{reaction.emoji}</span>
+                  <span>{reaction.count}</span>
+                </button>
+              );
+            })
+          ) : null}
+        </div>
 
         <button
           type="button"
-          onClick={handleReactionHandleClick}
-          aria-label={pickerVisible ? "Hide reactions" : "Show reactions"}
-          aria-expanded={pickerVisible}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-[#0c1524] text-base text-slate-300 transition hover:border-white/18 hover:text-white"
+          onClick={handleReactionDockToggle}
+          aria-label={reactionDockOpen ? "Close reaction dock" : "Open reaction dock"}
+          aria-expanded={reactionDockOpen}
+          disabled={isBusy}
+          className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-base font-semibold transition ${
+            reactionDockOpen
+              ? "border-transparent bg-amber-400/16 text-amber-50 shadow-[0_0_18px_rgba(251,191,36,0.10)]"
+              : "border-transparent bg-white/[0.035] text-slate-300 hover:border-transparent hover:bg-white/[0.075] hover:text-white"
+          } disabled:cursor-not-allowed disabled:opacity-60`}
         >
-          +
+          <span aria-hidden="true">{reactionDockOpen ? "×" : "+"}</span>
         </button>
       </div>
 
-        <div
-          className={`mt-3 max-w-full overflow-hidden transition-all duration-150 ${
-            pickerVisible ? "max-h-64 opacity-100" : "max-h-0 opacity-0"
-          }`}
-          onMouseEnter={handleDesktopHoverStart}
-          onMouseLeave={handleDesktopHoverEnd}
-        >
-          <div className="flex w-full min-w-0 max-w-full flex-wrap items-center gap-2 overflow-x-hidden rounded-2xl border border-white/10 bg-[#091321] p-2 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.025)]">
-            {LOBBY_MESSAGE_REACTIONS.map((emoji) => {
+      <div
+        className={`absolute inset-x-3 bottom-14 z-30 origin-bottom rounded-[1.15rem] border border-white/[0.035] bg-[#07111f]/96 p-2.5 shadow-[0_22px_58px_rgba(0,0,0,0.48),inset_0_0_0_1px_rgba(255,255,255,0.035)] backdrop-blur-xl transition duration-150 ${
+          reactionDockOpen
+            ? "pointer-events-auto translate-y-0 scale-100 opacity-100"
+            : "pointer-events-none translate-y-1 scale-[0.98] opacity-0"
+        }`}
+        role="dialog"
+        aria-label="Message reactions"
+        aria-hidden={!reactionDockOpen}
+      >
+        <div className="rounded-full border border-white/[0.035] bg-white/[0.045] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+          <div className="flex items-center gap-1">
+            {APPLE_STYLE_LOBBY_QUICK_REACTIONS.map((emoji) => {
               const existing = item.message.reactions.find((reaction) => reaction.emoji === emoji);
               const isActive = Boolean(existing?.viewerReacted);
 
               return (
                 <button
-                  key={`${item.message.id}-${emoji}`}
+                  key={`${item.message.id}-${emoji}-quick`}
                   type="button"
                   onClick={(event) => handleReactionToggle(event, emoji)}
                   aria-pressed={isActive}
                   disabled={reactingMessageId === item.message.id}
-                  className={`flex h-11 min-w-11 items-center justify-center rounded-full border px-3.5 text-[17px] transition ${
+                  className={`flex h-10 w-10 items-center justify-center rounded-full text-[18px] transition ${
                     isActive
-                      ? "border-amber-300/30 bg-amber-400/16 text-amber-50 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.12)]"
-                      : "border-white/10 bg-white/[0.045] text-slate-200 hover:border-white/18 hover:bg-white/[0.1] hover:text-white"
+                      ? "bg-amber-400/18 text-amber-50 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.04)]"
+                      : "bg-transparent text-slate-200 hover:bg-white/[0.09] hover:text-white"
                   } disabled:cursor-not-allowed disabled:opacity-60`}
                 >
                   <span>{emoji}</span>
@@ -765,29 +1027,78 @@ function LobbyMessageCard({
               );
             })}
 
-            {canManageMessage ? (
-              <button
-                type="button"
-                onClick={handleEditClick}
-                disabled={moderatingMessageId === item.message.id}
-                className="inline-flex h-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.045] px-3 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/18 hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Edit
-              </button>
-            ) : null}
-
-            {canManageMessage ? (
-              <button
-                type="button"
-                onClick={handleDeleteClick}
-                disabled={moderatingMessageId === item.message.id}
-                className="inline-flex h-10 items-center justify-center rounded-full border border-rose-300/22 bg-rose-500/10 px-3 text-[11px] font-medium uppercase tracking-[0.16em] text-rose-50 transition hover:border-rose-200/30 hover:bg-rose-500/16 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Delete
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setReactionMoreOpen((current) => !current);
+              }}
+              aria-label={reactionMoreOpen ? "Hide more reactions" : "Show more reactions"}
+              aria-expanded={reactionMoreOpen}
+              disabled={reactingMessageId === item.message.id}
+              className={`flex h-10 w-10 items-center justify-center rounded-full text-[15px] font-black tracking-[-0.16em] transition ${
+                reactionMoreOpen
+                  ? "bg-white/[0.12] text-white"
+                  : "bg-transparent text-slate-300 hover:bg-white/[0.09] hover:text-white"
+              } disabled:cursor-not-allowed disabled:opacity-60`}
+            >
+              <span aria-hidden="true">•••</span>
+            </button>
           </div>
         </div>
+
+        <div
+          className={`overflow-hidden transition-all duration-200 ${
+            reactionMoreOpen ? "mt-2 max-h-64 opacity-100" : "max-h-0 opacity-0"
+          }`}
+        >
+          <div className="grid grid-cols-8 gap-1 rounded-[1rem] border border-white/[0.035] bg-white/[0.035] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+            {APPLE_STYLE_LOBBY_MORE_REACTIONS.map((emoji) => {
+              const existing = item.message.reactions.find((reaction) => reaction.emoji === emoji);
+              const isActive = Boolean(existing?.viewerReacted);
+
+              return (
+                <button
+                  key={`${item.message.id}-${emoji}-more`}
+                  type="button"
+                  onClick={(event) => handleReactionToggle(event, emoji)}
+                  aria-pressed={isActive}
+                  disabled={reactingMessageId === item.message.id}
+                  className={`flex h-8 w-8 items-center justify-center rounded-full text-[16px] transition ${
+                    isActive
+                      ? "bg-amber-400/18 text-amber-50 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.04)]"
+                      : "bg-transparent text-slate-200 hover:bg-white/[0.09] hover:text-white"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  <span>{emoji}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {canManageMessage ? (
+          <div className="mt-2 grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              onClick={handleEditClick}
+              disabled={moderatingMessageId === item.message.id}
+              className="inline-flex h-9 items-center justify-center rounded-full border border-white/[0.055] bg-white/[0.045] px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/[0.11] hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Edit
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDeleteClick}
+              disabled={moderatingMessageId === item.message.id}
+              className="inline-flex h-9 items-center justify-center rounded-full border border-rose-300/14 bg-rose-500/10 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-50 transition hover:border-rose-200/20 hover:bg-rose-500/16 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Delete
+            </button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

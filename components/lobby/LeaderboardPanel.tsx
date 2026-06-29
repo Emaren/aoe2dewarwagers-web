@@ -2,7 +2,7 @@
 
 import { formatLobbyMoment } from "@/components/lobby/utils";
 import Link from "next/link";
-import { type UIEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type UIEvent, type WheelEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import SteamLinkedBadge from "@/components/SteamLinkedBadge";
 import {
@@ -22,7 +22,7 @@ type LeaderboardPanelProps = {
   surface?: "standard" | "extreme";
 };
 
-const LEADERBOARD_PAGE_SIZE = 80;
+const LEADERBOARD_PAGE_SIZE = 600;
 
 type LeaderboardPageResponse = {
   ok?: boolean;
@@ -84,7 +84,9 @@ export function LeaderboardPanel({
   );
   const entriesRef = useRef(entries);
   const leaderboardPanelRef = useRef<HTMLDivElement | null>(null);
+  const leaderboardScrollRef = useRef<HTMLDivElement | null>(null);
   const leaderboardSentinelRef = useRef<HTMLButtonElement | null>(null);
+  const leaderboardHydrationStartedRef = useRef(false);
   const preloadAllRef = useRef(false);
   const loadingRef = useRef(false);
   const nextOffsetRef = useRef(countRankedLeaderboardEntries(leaderboard.entries));
@@ -140,7 +142,7 @@ export function LeaderboardPanel({
       const nextHasMore =
         typeof payload.hasMore === "boolean"
           ? payload.hasMore
-          : countRankedLeaderboardEntries(nextEntries) >= LEADERBOARD_PAGE_SIZE;
+          : countRankedLeaderboardEntries(nextEntries) > 0;
       hasMoreRef.current = nextHasMore;
       setHasMore(nextHasMore);
     } catch (error) {
@@ -166,12 +168,37 @@ export function LeaderboardPanel({
     [loadMoreLeaderboardEntries]
   );
 
+  const handleLeaderboardWheel = useCallback(
+    (event: WheelEvent<HTMLDivElement>) => {
+      const target = event.currentTarget;
+
+      if (target.scrollHeight <= target.clientHeight) return;
+
+      const maxScrollTop = Math.max(0, target.scrollHeight - target.clientHeight);
+      const nextScrollTop = Math.max(0, Math.min(maxScrollTop, target.scrollTop + event.deltaY));
+
+      if (nextScrollTop !== target.scrollTop) {
+        event.preventDefault();
+        event.stopPropagation();
+        target.scrollTop = nextScrollTop;
+      }
+
+      const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+
+      if (distanceFromBottom < 640) {
+        void loadMoreLeaderboardEntries();
+      }
+    },
+    [loadMoreLeaderboardEntries]
+  );
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!canLoadMore) return;
 
     const node = leaderboardSentinelRef.current;
-    if (!node) return;
+    const root = leaderboardScrollRef.current;
+    if (!node || !root) return;
 
     const observer = new IntersectionObserver(
       (items) => {
@@ -180,7 +207,7 @@ export function LeaderboardPanel({
         }
       },
       {
-        root: null,
+        root,
         rootMargin: "900px 0px",
         threshold: 0.01,
       }
@@ -247,14 +274,14 @@ export function LeaderboardPanel({
     const preloadAllLeaderboardPages = async () => {
       await sleep(450);
 
-      for (let page = 0; page < 12; page += 1) {
+      for (let page = 0; page < 24; page += 1) {
         if (cancelled) return;
 
         const before = countRankedLeaderboardEntries(entriesRef.current);
         if (before >= leaderboard.trackedPlayers) return;
 
         await loadMoreLeaderboardEntries();
-        await sleep(320);
+        await sleep(180);
 
         const after = countRankedLeaderboardEntries(entriesRef.current);
         if (after <= before && !loadingRef.current) {
@@ -274,12 +301,73 @@ export function LeaderboardPanel({
   }, [leaderboard.trackedPlayers, loadMoreLeaderboardEntries]);
 
   const leaderboardScrollClassName = isExtreme
-    ? "mt-6 min-h-0 flex-1 space-y-3 overflow-y-auto pr-2"
-    : "mt-6 max-h-[62vh] space-y-3 overflow-y-auto pr-2 sm:max-h-[66vh] lg:max-h-[58rem] xl:max-h-[66rem]";
+    ? "mt-6 h-[min(78dvh,56rem)] min-h-0 space-y-3 overflow-y-auto overscroll-contain pr-2 [scrollbar-width:thin] [-webkit-overflow-scrolling:touch] [touch-action:pan-y]"
+    : "mt-6 h-[min(68dvh,44rem)] min-h-0 space-y-3 overflow-y-auto overscroll-contain pr-2 [scrollbar-width:thin] [-webkit-overflow-scrolling:touch] [touch-action:pan-y] sm:h-[min(70dvh,48rem)] lg:h-[min(74dvh,54rem)]";
 
   const leaderboardPanelShellClassName = isExtreme
     ? `relative flex min-h-[112rem] flex-col rounded-[1.85rem] border p-5 transition-all duration-300 sm:p-6 lg:min-h-[118rem] xl:min-h-[126rem] ${tone.panelShell}`
     : `relative rounded-[1.85rem] border p-5 transition-all duration-300 sm:p-6 ${tone.panelShell}`;
+
+  useEffect(() => {
+    if (leaderboardHydrationStartedRef.current) return;
+
+    const firstOffset = countRankedLeaderboardEntries(entries);
+    if (firstOffset <= 0) return;
+
+    leaderboardHydrationStartedRef.current = true;
+
+    let cancelled = false;
+
+    async function hydrateFullLeaderboard() {
+      let offset = firstOffset;
+
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        if (cancelled) return;
+
+        try {
+          const response = await fetch(
+            `/api/lobby/leaderboard?offset=${offset}&limit=${LEADERBOARD_PAGE_SIZE}`,
+            { cache: "no-store" }
+          );
+
+          const payload = (await response.json().catch(() => ({}))) as {
+            entries?: LobbyLeaderboardSummary["entries"];
+          };
+
+          const nextEntries = Array.isArray(payload.entries) ? payload.entries : [];
+          const nextRankedCount = countRankedLeaderboardEntries(nextEntries);
+
+          if (!response.ok || nextRankedCount === 0) {
+            hasMoreRef.current = false;
+            setHasMore(false);
+            return;
+          }
+
+          setEntries((current) => {
+            const merged = mergeLeaderboardEntries(current, nextEntries);
+            entriesRef.current = merged;
+            nextOffsetRef.current = countRankedLeaderboardEntries(merged);
+            return merged;
+          });
+          hasMoreRef.current = true;
+          setHasMore(true);
+
+          offset += nextRankedCount;
+
+          await new Promise((resolve) => window.setTimeout(resolve, 90));
+        } catch {
+          return;
+        }
+      }
+    }
+
+    void hydrateFullLeaderboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [entries]);
+
 
   return (
     <div
@@ -361,7 +449,17 @@ export function LeaderboardPanel({
         </div>
       </div>
 
-      <div className={leaderboardScrollClassName} aria-busy={isLoadingMore} onScroll={handleLeaderboardScroll}>
+      <div className="mt-3 rounded-xl border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-[0.62rem] font-black uppercase tracking-[0.18em] text-amber-100">
+        Debug board rows: {countRankedLeaderboardEntries(entries)} / {leaderboard.trackedPlayers}
+      </div>
+
+      <div
+        ref={leaderboardScrollRef}
+        className={leaderboardScrollClassName}
+        aria-busy={isLoadingMore}
+        onScroll={handleLeaderboardScroll}
+        onWheel={handleLeaderboardWheel}
+      >
         {entries.length === 0 ? (
           <div className="rounded-2xl border border-white/8 bg-white/5 px-4 py-5 text-sm leading-6 text-slate-300">
             Need more final games.
@@ -442,21 +540,21 @@ export function LeaderboardPanel({
             </Link>
           ))
         )}
-      </div>
-
-      {canLoadMore ? (
-        <button
-          ref={leaderboardSentinelRef}
-          type="button"
-          onClick={() => {
+        {canLoadMore ? (
+          <button
+            ref={leaderboardSentinelRef}
+            type="button"
+            onClick={() => {
             void loadMoreLeaderboardEntries();
           }}
-          disabled={isLoadingMore}
-          className="mt-5 flex w-full items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-300 transition hover:border-amber-200/30 hover:bg-amber-300/10 hover:text-amber-100 disabled:cursor-wait disabled:opacity-70"
-        >
+            disabled={isLoadingMore}
+            className="mt-5 flex w-full items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-300 transition hover:border-amber-200/30 hover:bg-amber-300/10 hover:text-amber-100 disabled:cursor-wait disabled:opacity-70"
+          >
           {isLoadingMore ? "Loading more warriors..." : "Load more warriors"}
-        </button>
-      ) : null}
+          </button>
+        ) : null}
+
+      </div>
 
       <div className={`mt-5 flex flex-wrap items-center justify-end gap-3 border-t pt-4 ${tone.divider}`}>
         <Link

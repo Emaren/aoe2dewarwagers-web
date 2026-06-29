@@ -29,6 +29,10 @@ import {
   type WoloIndexedTransferActivityRow,
 } from "@/lib/woloMainnetTransfers";
 import { getWoloMainnetDisplayStartAt, isWoloMainnet } from "@/lib/woloChain";
+import {
+  canExposePublicStakingActivityEvent,
+  stakingTransferLedgerPresentation,
+} from "@/lib/stakingTransferClassification";
 
 export {
   BETTING_FEE_RATE_BPS,
@@ -40,7 +44,14 @@ export type StakingPeriodKey = "24h" | "7d" | "30d" | "all";
 export type StakingBoardKey = "stakers" | "earners" | "rewards";
 export type StakingActionType = "STAKE" | "UNSTAKE" | "CLAIM" | "ADJUSTMENT";
 export type StakingActivityMode = "ledger" | "grouped";
-export type StakingActivityFilter = "all" | "staking" | "compounded" | "bounties" | "bets" | "transfers";
+export type StakingActivityFilter =
+  | "all"
+  | "staking"
+  | "compounded"
+  | "bounties"
+  | "bets"
+  | "transfers"
+  | "reserve";
 
 export type StakingActivityItem = {
   key?: string;
@@ -469,7 +480,7 @@ function shortAddress(value: string | null | undefined) {
 
 export function isPublicStakingActivityItem(item: StakingActivityItem) {
   return (
-    item.eventType !== "FAUCET" &&
+    canExposePublicStakingActivityEvent(item.eventType) &&
     (item.eventType === "CYCLE" ||
       item.eventType === "REWARD" ||
       item.eventType === "PAYOUT" ||
@@ -481,24 +492,28 @@ export function isPublicStakingActivityItem(item: StakingActivityItem) {
   );
 }
 
-function indexedTransferToActivityItem(
+export function indexedTransferToActivityItem(
   row: WoloIndexedTransferActivityRow,
   now = new Date()
 ): StakingActivityItem & { sortAt: Date } {
   const timestamp = new Date(row.timestamp);
   const safeTimestamp = Number.isNaN(timestamp.getTime()) ? now : timestamp;
   const timestampLabel = formatMoment(safeTimestamp);
+  const presentation = stakingTransferLedgerPresentation(
+    row.classification,
+    row.amountLabel
+  );
 
   return {
     key: row.key,
-    label: labelForIndexedTransfer(row),
+    label: presentation.label,
     detail: detailForIndexedTransfer(row),
     meta: timestampLabel,
-    eventType: "DIRECT",
+    eventType: presentation.eventType,
     amountLabel: row.amountLabel,
     timestampLabel,
     occurredAt: safeTimestamp.toISOString(),
-    tone: "emerald",
+    tone: presentation.tone,
     sortAt: safeTimestamp,
   };
 }
@@ -526,15 +541,19 @@ function labelForMainnetActivity(row: WoloMainnetActivityRow) {
   return `${amount} ${row.actionLabel.toLowerCase()}: ${actor}`;
 }
 
-function labelForIndexedTransfer(row: WoloIndexedTransferActivityRow) {
-  return `${row.amountLabel} direct transfer`;
-}
-
 function detailForIndexedTransfer(row: WoloIndexedTransferActivityRow) {
   const sender = row.senderLabel || shortAddress(row.senderAddress) || "wallet";
   const recipient = row.recipientLabel || shortAddress(row.recipientAddress) || "wallet";
   const txLabel = shortHash(row.txHash);
-  const parts = [`${sender} -> ${recipient}`, txLabel ? `tx ${txLabel}` : null];
+  const presentation = stakingTransferLedgerPresentation(
+    row.classification,
+    row.amountLabel
+  );
+  const parts = [
+    presentation.detailPrefix,
+    `${sender} -> ${recipient}`,
+    txLabel ? `tx ${txLabel}` : null,
+  ];
   if (row.memo) parts.push(`memo ${row.memo.slice(0, 80)}`);
   return parts.filter(Boolean).join(" · ");
 }
@@ -1160,13 +1179,14 @@ export async function loadMainnetTransferStakingActivityPage(
     limit?: number | null;
     mode?: StakingActivityMode | null;
     filter?: StakingActivityFilter | null;
+    includeReserveActivity?: boolean;
   } = {}
 ): Promise<StakingActivityPage> {
   const limit = Math.max(1, Math.min(options.limit ?? 16, 40));
   const before = options.before ?? null;
   const mode: StakingActivityMode = options.mode === "grouped" ? "grouped" : "ledger";
   const filter: StakingActivityFilter =
-    options.filter === "staking" || options.filter === "compounded" || options.filter === "bounties" || options.filter === "bets" || options.filter === "transfers"
+    options.filter === "staking" || options.filter === "compounded" || options.filter === "bounties" || options.filter === "bets" || options.filter === "transfers" || options.filter === "reserve"
       ? options.filter
       : "all";
   const rawActivityTake =
@@ -1439,7 +1459,11 @@ export async function loadMainnetTransferStakingActivityPage(
     ...indexedTransferRows.map((row) => indexedTransferToActivityItem(row)),
     ...giftRows.map((row) => giftToActivityItem(row)),
   ]
-    .filter(isPublicStakingActivityItem)
+    .filter((item) =>
+      isPublicStakingActivityItem(item) ||
+      (options.includeReserveActivity &&
+        String(item.eventType || "").toUpperCase() === "RESERVE")
+    )
     .filter((item) => {
       if (!validBeforeDate || !item.occurredAt) return true;
       const occurredAt = new Date(item.occurredAt);
@@ -1482,6 +1506,7 @@ export async function loadMainnetTransferStakingActivityPage(
         eventType === "REWARD" ||
         eventType === "STAKE" ||
         eventType === "UNSTAKE" ||
+        eventType === "RESERVE" ||
         eventType === "CYCLE" ||
         eventType === "COMPOUND" ||
         (eventType === "TX" && (text.includes("compound") || text.includes("staking event"))) ||
@@ -1504,6 +1529,7 @@ export async function loadMainnetTransferStakingActivityPage(
         eventType === "REWARD" ||
         eventType === "STAKE" ||
         eventType === "UNSTAKE" ||
+        eventType === "RESERVE" ||
         eventType === "CYCLE" ||
         eventType === "COMPOUND" ||
         (eventType === "TX" && (text.includes("compound") || text.includes("staking event"))) ||
@@ -1534,14 +1560,25 @@ export async function loadMainnetTransferStakingActivityPage(
     }
 
     if (filter === "transfers") {
-      return eventType === "DIRECT" || eventType === "GIFT";
+      return (
+        eventType === "DIRECT" ||
+        eventType === "RESERVE" ||
+        eventType === "GIFT"
+      );
+    }
+
+    if (filter === "reserve") {
+      return eventType === "RESERVE";
     }
 
     return true;
   });
 
   const visibleRows =
-    mode === "grouped" && filter !== "staking" && filter !== "compounded"
+    mode === "grouped" &&
+    filter !== "staking" &&
+    filter !== "compounded" &&
+    filter !== "reserve"
       ? groupStakingBetActivityItems(filteredCombined, limit + 1)
       : filteredCombined;
 

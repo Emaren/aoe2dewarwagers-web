@@ -34,6 +34,7 @@ ssh hel1
 cd /mnt/HC_Volume_105319120/www-moved/AoE2DEWarWagers/app-prodn
 git status --short
 git pull --ff-only origin main
+npx prisma migrate deploy
 npm run build
 sudo systemctl restart aoe2dewarwagers-web.service
 systemctl is-active aoe2dewarwagers-web.service

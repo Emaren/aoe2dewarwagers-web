@@ -151,7 +151,7 @@ function compareLeaderboardEntries(left: EnrichedLeaderboardEntry, right: Enrich
   return left.name.localeCompare(right.name);
 }
 
-const LOBBY_LEADERBOARD_INITIAL_ENTRY_LIMIT = 80;
+const LOBBY_LEADERBOARD_INITIAL_ENTRY_LIMIT = 600;
 
 function buildLeaderboardSelection(entries: EnrichedLeaderboardEntry[], options: LoadLobbyLeaderboardOptions = {}) {
   const eligibleEntries = entries
@@ -411,6 +411,7 @@ function toLobbyLeaderboardEntry(
     rank,
     key: entry.key,
     name: entry.name,
+    uid: "uid" in entry ? ((entry as { uid?: string | null }).uid ?? null) : null,
     href: entry.href,
     elo: Math.round(entry.arenaElo),
     arenaElo: Math.round(entry.arenaElo),

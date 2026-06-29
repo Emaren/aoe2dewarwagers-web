@@ -28,9 +28,10 @@ import {
   type LobbyMessage,
   type LobbySnapshot,
 } from "@/lib/lobby";
-import { avatarUrlForName } from "@/lib/avatarAssets";
+import { avatarCardUrlForUser, avatarUrlForName } from "@/lib/avatarAssets";
 
 const EMPTY_MESSAGES: LobbyMessage[] = [];
+const ZODIAC_UID = "u_06c16d39d25c476fac2c86fee7b4d189";
 
 const FEATURED_WARRIOR_SLOT_COUNT = 4;
 const FEATURED_WARRIOR_ROTATE_MS = 5200;
@@ -90,6 +91,15 @@ const FEATURED_WARRIOR_FALLBACKS: FeaturedWarrior[] = [
 ];
 
 const FEATURED_WARRIOR_PREMIUM_POOL: FeaturedWarrior[] = [
+
+  {
+    key: "premium:zodiac",
+    name: "Zodiac",
+    lookupName: "Zodiac",
+    role: "Chaos Champion",
+    href: `/players/${encodeURIComponent(ZODIAC_UID)}`,
+    imageUrl: avatarCardUrlForUser(ZODIAC_UID, "Zodiac"),
+  },
   ...FEATURED_WARRIOR_FALLBACKS,
   {
     key: "premium:bdbpigman",
@@ -225,6 +235,8 @@ function usePrefersReducedMotion() {
 const FEATURED_WARRIOR_MIN_REAL_AVATARS = 3;
 
 const FEATURED_WARRIOR_REAL_AVATAR_KEYS = new Set([
+  "premium:zodiac",
+  "zodiac",
   "dil-pascana",
   "premium:sniper",
   "premium:julio",
@@ -326,6 +338,7 @@ function deterministicFeaturedWarriorOpening(pool: FeaturedWarrior[]) {
   }
 
   const preferredKeys = [
+    "premium:zodiac",
     "dil-pascana",
     "premium:sniper",
     "premium:julio-alvarez",
@@ -600,6 +613,21 @@ function ExtremeFeaturedWarriors({ warriors }: { warriors: FeaturedWarrior[] }) 
   );
 }
 
+function mergeLobbyMessagesById(...groups: LobbyMessage[][]) {
+  const byId = new Map<number, LobbyMessage>();
+
+  for (const group of groups) {
+    for (const message of group) {
+      byId.set(message.id, message);
+    }
+  }
+
+  return Array.from(byId.values()).sort((left, right) => {
+    const timeDelta = new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+    return timeDelta !== 0 ? timeDelta : left.id - right.id;
+  });
+}
+
 export default function HomePageClient({
 
 
@@ -632,6 +660,10 @@ const { uid, isAdmin, isAuthenticated, loading, loginWithSteam, playerName, user
 
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const rightColumnRef = useRef<HTMLDivElement | null>(null);
+  const chatHistoryPendingRef = useRef(false);
+  const chatHistoryExhaustedRef = useRef(false);
+  const chatInitialBottomScrollDoneRef = useRef(false);
+  const lastNewestChatMessageIdRef = useRef<number | null>(null);
 
   const loadLobby = useCallback(async () => {
     try {
@@ -641,7 +673,14 @@ const { uid, isAdmin, isAuthenticated, loading, loginWithSteam, playerName, user
       }
 
       const payload = (await response.json()) as LobbySnapshot;
-      setLobby(payload);
+      setLobby((current) =>
+        current
+          ? {
+              ...payload,
+              messages: mergeLobbyMessagesById(current.messages, payload.messages),
+            }
+          : payload
+      );
       setLobbyError(null);
     } catch (error) {
       console.warn("Failed to load lobby:", error);
@@ -671,7 +710,14 @@ return () => {
     const handleSnapshot = (event: MessageEvent<string>) => {
       try {
         const snapshot = JSON.parse(event.data) as LobbySnapshot;
-        setLobby(snapshot);
+        setLobby((current) =>
+          current
+            ? {
+                ...snapshot,
+                messages: mergeLobbyMessagesById(current.messages, snapshot.messages),
+              }
+            : snapshot
+        );
         setLobbyError(null);
         setLiveConnected(true);
       } catch (error) {
@@ -729,48 +775,146 @@ return () => {
   const shouldShowShowcaseLobby = isAdvancedLobby || isExtremeLobby;
 
   const chatItems = buildChatItems(messages);
-  const latestChatMessageKey = useMemo(
-    () =>
-      messages.length > 0
-        ? `${messages[messages.length - 1]?.id ?? "last"}:${messages[messages.length - 1]?.createdAt ?? ""}`
-        : "empty",
-    [messages]
-  );
 
   const chatRoomTitle =
     messages.length > 0 && messages[0]?.roomSlug === tournament.roomSlug && !tournament.isFallback
       ? `${tournament.title} Chat`
       : "Live Chat";
 
-  const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
-    const node = chatScrollRef.current;
-    if (!node) return;
+  const settleChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const run = () => {
+      const node = chatScrollRef.current;
+      if (!node) return;
 
-    node.scrollTo({ top: node.scrollHeight, behavior });
-  }, []);
+      node.scrollTo({ top: node.scrollHeight, behavior });
+    };
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (chatItems.length === 0) return;
-
-    let secondFrame = 0;
-    const timeout = window.setTimeout(() => {
-      scrollChatToBottom();
-    }, 140);
-
-    const frame = window.requestAnimationFrame(() => {
-      scrollChatToBottom();
-      secondFrame = window.requestAnimationFrame(() => {
-        scrollChatToBottom();
-      });
+    window.requestAnimationFrame(() => {
+      run();
+      window.requestAnimationFrame(run);
     });
 
-    return () => {
-      window.clearTimeout(timeout);
-      window.cancelAnimationFrame(frame);
-      window.cancelAnimationFrame(secondFrame);
-    };
-  }, [chatCardHeight, latestChatMessageKey, chatItems.length, scrollChatToBottom]);
+    window.setTimeout(run, 80);
+    window.setTimeout(run, 180);
+    window.setTimeout(run, 360);
+    window.setTimeout(run, 720);
+    window.setTimeout(run, 1200);
+  }, []);
+
+  const isChatNearBottom = useCallback((threshold = 360) => {
+    const node = chatScrollRef.current;
+    if (!node) return true;
+
+    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    return distanceFromBottom <= threshold;
+  }, []);
+
+
+  const loadOlderChatMessages = useCallback(async () => {
+    if (chatHistoryPendingRef.current || chatHistoryExhaustedRef.current) return;
+
+    const oldestMessage = messages[0];
+    if (!oldestMessage?.id) return;
+
+    const viewport = chatScrollRef.current;
+    const previousScrollHeight = viewport?.scrollHeight ?? 0;
+    const previousScrollTop = viewport?.scrollTop ?? 0;
+
+    chatHistoryPendingRef.current = true;
+
+    try {
+      const params = new URLSearchParams({
+        roomSlug: tournament.roomSlug,
+        beforeId: String(oldestMessage.id),
+        limit: "50",
+      });
+
+      const response = await fetch(`/api/lobby/chat?${params.toString()}`, {
+        cache: "no-store",
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        messages?: LobbyMessage[];
+        hasMore?: boolean;
+      };
+
+      const olderMessages = Array.isArray(payload.messages) ? payload.messages : [];
+
+      if (!response.ok || olderMessages.length === 0) {
+        chatHistoryExhaustedRef.current = true;
+        return;
+      }
+
+      setLobby((current) =>
+        current
+          ? {
+              ...current,
+              messages: mergeLobbyMessagesById(olderMessages, current.messages),
+            }
+          : current
+      );
+
+      if (payload.hasMore === false) {
+        chatHistoryExhaustedRef.current = true;
+      }
+
+      const restoreChatScrollPosition = () => {
+        const nextViewport = chatScrollRef.current;
+        if (!nextViewport) return;
+
+        nextViewport.scrollTop = Math.max(
+          0,
+          nextViewport.scrollHeight - previousScrollHeight + previousScrollTop
+        );
+      };
+
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(restoreChatScrollPosition);
+      });
+      window.setTimeout(restoreChatScrollPosition, 90);
+      window.setTimeout(restoreChatScrollPosition, 240);
+    } catch (error) {
+      console.warn("Failed to load older lobby messages:", error);
+    } finally {
+      chatHistoryPendingRef.current = false;
+    }
+  }, [messages, tournament.roomSlug]);
+
+  useEffect(() => {
+    chatHistoryExhaustedRef.current = false;
+    chatHistoryPendingRef.current = false;
+    chatInitialBottomScrollDoneRef.current = false;
+    lastNewestChatMessageIdRef.current = null;
+  }, [tournament.roomSlug]);
+
+  useEffect(() => {
+    const newestMessageId = messages[messages.length - 1]?.id ?? null;
+    const previousNewestMessageId = lastNewestChatMessageIdRef.current;
+
+    lastNewestChatMessageIdRef.current = newestMessageId;
+
+    if (!newestMessageId) return;
+
+    if (!chatInitialBottomScrollDoneRef.current) {
+      chatInitialBottomScrollDoneRef.current = true;
+      settleChatToBottom("auto");
+      return;
+    }
+
+    // Older history prepends and reaction-only changes do not change the newest id.
+    // Do not move the user's viewport for those.
+    if (previousNewestMessageId === newestMessageId) {
+      return;
+    }
+
+    // A genuinely newer chat message arrived. Only follow it if the user was
+    // already near the live edge.
+    if (!isChatNearBottom(520)) {
+      return;
+    }
+
+    settleChatToBottom("smooth");
+  }, [messages, isChatNearBottom, settleChatToBottom]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -827,41 +971,83 @@ return () => {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const syncChatHeightToRightColumn = () => {
+    let frame = 0;
+    let observer: ResizeObserver | null = null;
+
+    const measureChatHeight = () => {
       if (window.innerWidth < 1024) {
         setChatCardHeight(null);
         return;
       }
 
       const rightHeight = rightColumnRef.current?.getBoundingClientRect().height ?? 0;
-      if (rightHeight > 0) {
-        setChatCardHeight(Math.ceil(rightHeight));
-      }
+      const nextHeight = rightHeight > 0 ? Math.ceil(rightHeight) : null;
+
+      setChatCardHeight((current) => (current === nextHeight ? current : nextHeight));
     };
 
-    syncChatHeightToRightColumn();
+    const scheduleMeasure = () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        measureChatHeight();
+      });
+    };
+
+    const attachObserver = () => {
+      if (observer || typeof ResizeObserver === "undefined" || !rightColumnRef.current) {
+        return;
+      }
+
+      observer = new ResizeObserver(() => {
+        scheduleMeasure();
+      });
+
+      observer.observe(rightColumnRef.current);
+    };
+
+    const settleTimers = [0, 50, 150, 300, 700, 1200].map((delay) =>
+      window.setTimeout(() => {
+        attachObserver();
+        scheduleMeasure();
+      }, delay)
+    );
 
     const handleResize = () => {
-      syncChatHeightToRightColumn();
+      attachObserver();
+      scheduleMeasure();
     };
 
     window.addEventListener("resize", handleResize);
+    window.addEventListener("load", handleResize);
 
-    if (typeof ResizeObserver === "undefined" || !rightColumnRef.current) {
-      return () => {
-        window.removeEventListener("resize", handleResize);
-      };
+    if (document.fonts?.ready) {
+      document.fonts.ready
+        .then(() => {
+          attachObserver();
+          scheduleMeasure();
+        })
+        .catch(() => {});
     }
 
-    const observer = new ResizeObserver(() => {
-      syncChatHeightToRightColumn();
-    });
-
-    observer.observe(rightColumnRef.current);
+    attachObserver();
+    scheduleMeasure();
 
     return () => {
-      observer.disconnect();
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+
+      for (const timer of settleTimers) {
+        window.clearTimeout(timer);
+      }
+
+      observer?.disconnect();
       window.removeEventListener("resize", handleResize);
+      window.removeEventListener("load", handleResize);
     };
   }, []);
 
@@ -1039,7 +1225,7 @@ return () => {
 
   const chatCardStyle: CSSProperties | undefined =
     chatCardHeight && typeof window !== "undefined" && window.innerWidth >= 1024
-      ? { height: `${chatCardHeight}px` }
+      ? { height: `${chatCardHeight}px`, minHeight: `${chatCardHeight}px`, maxHeight: `${chatCardHeight}px`, overflow: "hidden" }
       : undefined;
   const heroRailStyle: CSSProperties | undefined =
     heroRailHeight && typeof window !== "undefined" && window.innerWidth >= 1024
@@ -1188,6 +1374,9 @@ return (
           messagesCount={messages.length}
           chatItems={chatItems}
           chatScrollRef={chatScrollRef}
+          onLoadOlderMessages={() => {
+            void loadOlderChatMessages();
+          }}
           chatError={chatError}
           chatNotice={chatNotice}
           isAuthenticated={isAuthenticated}

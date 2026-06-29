@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useUserAuth } from "@/context/UserAuthContext";
 import type { StakingActivityItem } from "@/lib/staking";
 
 type ActivityFeedEvent = CustomEvent<{ item?: StakingActivityItem }>;
@@ -13,7 +14,15 @@ const LIVE_POLL_INTERVAL_MS = 12_000;
 type ActivityMode = "ledger" | "grouped";
 const STAKING_ACTIVITY_PREFS_KEY = "aoe2war:staking-activity-prefs:ledger-all-v1";
 
-type ActivityFilterMode = "all" | "belts" | "staking" | "compounded" | "bounties" | "bets" | "transfers";
+type ActivityFilterMode =
+  | "all"
+  | "belts"
+  | "staking"
+  | "compounded"
+  | "bounties"
+  | "bets"
+  | "transfers"
+  | "reserve";
 type BeltPayoutFilterMode = "all" | "tributes" | "bounties";
 
 type ActivityPageResponse = {
@@ -24,6 +33,22 @@ type ActivityPageResponse = {
 
 function normalizedEventType(item: StakingActivityItem) {
   return String(item.eventType || "").toUpperCase();
+}
+
+function isReserveActivity(item: StakingActivityItem) {
+  const eventType = normalizedEventType(item);
+  const text = sanitizeActivityCopy(
+    `${item.label || ""} ${item.detail || ""} ${item.meta || ""} ${item.amountLabel || ""}`
+  ).toLowerCase();
+
+  return (
+    eventType === "RESERVE" ||
+    text.includes("operating reserve") ||
+    text.includes("reserve funding") ||
+    text.includes("wallet-reserve") ||
+    text.includes("operating-reserve") ||
+    text.includes("staking-wallet-operating-reserve")
+  );
 }
 
 function isBountyActivity(item: StakingActivityItem) {
@@ -111,8 +136,6 @@ function isTransferActivity(item: StakingActivityItem) {
   const type = normalizedEventType(item);
   return type === "DIRECT" || type === "GIFT";
 }
-
-
 
 function isBeltTributePayoutActivity(item: StakingActivityItem) {
   const haystack = `${item.label || ""} ${item.detail || ""} ${item.meta || ""} ${item.eventType || ""}`.toLowerCase();
@@ -217,13 +240,17 @@ function formatBountySummaryWolo(value: number) {
 }
 
 function filterActivityRows(rows: StakingActivityItem[], filter: ActivityFilterMode) {
-  if (filter === "belts") return rows.filter(isBeltActivity);
-  if (filter === "staking") return rows.filter(isStakingActivity);
-  if (filter === "compounded") return rows.filter(isCompoundedActivity);
-  if (filter === "bounties") return rows.filter(isBountyActivity);
-  if (filter === "bets") return rows.filter(isBetActivity);
-  if (filter === "transfers") return rows.filter(isTransferActivity);
-  return rows;
+  if (filter === "reserve") return rows.filter(isReserveActivity);
+
+  const publicRows = rows.filter((row) => !isReserveActivity(row));
+
+  if (filter === "belts") return publicRows.filter(isBeltActivity);
+  if (filter === "staking") return publicRows.filter(isStakingActivity);
+  if (filter === "compounded") return publicRows.filter(isCompoundedActivity);
+  if (filter === "bounties") return publicRows.filter(isBountyActivity);
+  if (filter === "bets") return publicRows.filter(isBetActivity);
+  if (filter === "transfers") return publicRows.filter(isTransferActivity);
+  return publicRows;
 }
 
 function activityKey(item: StakingActivityItem) {
@@ -354,6 +381,7 @@ export default function StakingActivityFeed({
   note?: string;
   loadMoreEndpoint?: string;
 }) {
+  const { isAdmin } = useUserAuth();
   const initialRows = useMemo(() => items.slice(0, PAGE_SIZE), [items]);
   const [mode, setMode] = useState<ActivityMode>("ledger");
   const [filterMode, setFilterMode] = useState<ActivityFilterMode>("all");
@@ -379,7 +407,8 @@ export default function StakingActivityFeed({
           parsed.filterMode === "compounded" ||
           parsed.filterMode === "bounties" ||
           parsed.filterMode === "bets" ||
-          parsed.filterMode === "transfers"
+          parsed.filterMode === "transfers" ||
+          (isAdmin && parsed.filterMode === "reserve")
             ? parsed.filterMode
             : undefined;
 
@@ -388,9 +417,9 @@ export default function StakingActivityFeed({
             ? parsed.mode
             : undefined;
 
-        if (nextFilter === "bounties") {
+        if (nextFilter === "bounties" || nextFilter === "reserve") {
           setMode("ledger");
-          setFilterMode("bounties");
+          setFilterMode(nextFilter);
         } else {
           if (nextMode) setMode(nextMode);
           if (nextFilter) setFilterMode(nextFilter);
@@ -401,7 +430,13 @@ export default function StakingActivityFeed({
     } finally {
       setActivityPrefsLoaded(true);
     }
-  }, []);
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin && filterMode === "reserve") {
+      setFilterMode("all");
+    }
+  }, [filterMode, isAdmin]);
 
   useEffect(() => {
     if (!activityPrefsLoaded) return;
@@ -619,7 +654,10 @@ export default function StakingActivityFeed({
   }, []);
 
   useEffect(() => {
-    if (filterMode === "bounties" && mode !== "ledger") {
+    if (
+      (filterMode === "bounties" || filterMode === "reserve") &&
+      mode !== "ledger"
+    ) {
       setMode("ledger");
     }
   }, [filterMode, mode]);
@@ -727,7 +765,7 @@ export default function StakingActivityFeed({
     return () => observer.disconnect();
   }, [hasMore, loadMore, loadMoreEndpoint]);
 
-  const baseVisibleRows = loadMoreEndpoint ? rows : filterActivityRows(rows, filterMode);
+  const baseVisibleRows = filterActivityRows(rows, filterMode);
   const visibleRows =
     filterMode === "belts"
       ? filterBeltActivityRows(baseVisibleRows, beltPayoutFilterMode)
@@ -737,6 +775,19 @@ export default function StakingActivityFeed({
     [filterMode, mode, visibleRows]
   );
   const bountySummary = filterMode === "bounties" ? computePublicBountySummary(displayRows) : null;
+  const activityFilters = useMemo<ActivityFilterMode[]>(
+    () => [
+      "all",
+      "belts",
+      "staking",
+      "compounded",
+      "bounties",
+      "bets",
+      "transfers",
+      ...(isAdmin ? (["reserve"] as const) : []),
+    ],
+    [isAdmin]
+  );
 
   return (
     <div className="space-y-2.5 overflow-hidden">
@@ -806,7 +857,7 @@ export default function StakingActivityFeed({
           </div>
         </div>
         <div className="mb-3 flex flex-wrap gap-2">
-          {(["all", "belts", "staking", "compounded", "bounties", "bets", "transfers"] as ActivityFilterMode[]).map((filter) => (
+          {activityFilters.map((filter) => (
             <button
               key={filter}
               type="button"
@@ -820,7 +871,7 @@ export default function StakingActivityFeed({
                   : "border-transparent bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-slate-200"
               }`}
             >
-              {filter}
+              {filter === "reserve" ? "reserve/admin" : filter}
             </button>
           ))}
         </div>
@@ -920,8 +971,23 @@ function sanitizeActivityCopy(value?: string | null) {
     .replace(/settled/gi, "settled");
 }
 
+const BELT_PAYOUT_CARD_BG = "/champions/payout-cards/bp_gold.png";
+
 const BELT_ACTIVITY_ASSETS = [
   {
+    terms: [
+      "aoe2war chaos champion tribute",
+      "chaos champion tribute",
+      "chaos championship tribute",
+      "chaos champion",
+      "chaos championship",
+      "chaos",
+    ],
+    src: "/uploads/managed-assets/belt/chaos-1781548010810-37d46c34.png",
+    alt: "Chaos Champion belt",
+    badge: "Chaos Champion",
+  },
+{
     terms: ["canada champion tribute", "canadian champion", "canada champion", "canada"],
     src: "/api/media-assets/belt/national-canada?fallback=/champions/belts/canada.png",
     alt: "Canadian Championship belt",
@@ -1194,43 +1260,62 @@ function ActivityRow({
   const displayTimestampLabel = sanitizeActivityCopy(item.timestampLabel || item.meta);
 
   if (beltAsset) {
+    const beltTitle = beltAsset.badge;
     const beltHeadline = amountLabel
-      ? `${displayAmountLabel} Canadian Championship title payout`
-      : displayLabel.replace(/direct transfer/gi, "Canadian Championship title payout");
+      ? `${displayAmountLabel} ${beltTitle} title payout`
+      : displayLabel.replace(/direct transfer/gi, `${beltTitle} title payout`);
 
     const beltDetail = displayDetail
       .replace(/Founder Rewards\s*->\s*/gi, "Founder Rewards → ")
       .replace(/AoE2WAR\s+(?:Canada Champion|Canadian Champion|Champion of Canada|Canadian Championship)\s+Tribute/gi, "AoE2WAR Canadian Championship Tribute")
-      .replace(/(AoE2WAR Canadian Championship Tribute)\s*[—-]\s*.*$/i, "$1")
+      .replace(/(AoE2WAR (?:Canadian Championship|Chaos Champion|USA Champion|Mexico Champion|UK Champion|World Champion|Elite Champion|Veteran Champion|Legend Champion|Rising Champion|Challenger Champion) Tribute)\s*[—-]\s*.*$/i, "$1")
       .replace(/Daily title payout for\s*$/i, "Daily title payout");
 
-    const beltFlag = beltAsset.badge.toLowerCase().includes("canadian") ? "🇨🇦" : "🏆";
+    const isCanadianBelt = beltAsset.badge.toLowerCase().includes("canadian");
+    const beltFlag = isCanadianBelt ? "🇨🇦" : "🏆";
+    const beltStageClassName = isCanadianBelt
+      ? "pointer-events-none absolute bottom-[1.34rem] right-[0.98rem] top-[1.18rem] z-30 flex w-[33.25%] items-end justify-center sm:right-[5.95rem] sm:w-[26.8%]"
+      : "pointer-events-none absolute bottom-[1.42rem] right-[1.06rem] top-[1.2rem] z-30 flex w-[33.15%] items-end justify-center sm:right-[6.05rem] sm:w-[26.65%]";
+    const beltImageClassName = isCanadianBelt
+      ? "h-auto max-h-[6.55rem] w-auto max-w-full translate-y-[0.44rem] object-contain opacity-[0.99] drop-shadow-[0_24px_42px_rgba(0,0,0,0.82)] sm:max-h-[6.72rem]"
+      : "h-auto max-h-[6.42rem] w-auto max-w-full translate-y-[0.38rem] object-contain opacity-[0.99] drop-shadow-[0_24px_42px_rgba(0,0,0,0.82)] sm:max-h-[6.62rem]";
+    const beltContextLines = beltDetail
+      .split(/\s*[·•]\s*/g)
+      .map((part) => part.trim())
+      .filter(Boolean);
 
     const beltCardClassName = [
-      "relative max-w-full overflow-hidden rounded-[1.08rem] border border-transparent",
+      "relative max-w-full overflow-hidden rounded-[1.18rem] border-0 bg-slate-950/70",
       "bg-[radial-gradient(115%_135%_at_5%_48%,rgba(255,220,135,0.22)_0%,rgba(189,121,30,0.15)_24%,transparent_53%),radial-gradient(115%_135%_at_96%_52%,rgba(245,178,72,0.24)_0%,rgba(156,92,24,0.15)_25%,transparent_54%),radial-gradient(70%_125%_at_50%_-8%,rgba(255,244,214,0.095)_0%,rgba(255,244,214,0.035)_24%,transparent_48%),linear-gradient(96deg,rgba(48,32,16,0.94)_0%,rgba(17,17,24,0.955)_29%,rgba(5,10,24,0.99)_50%,rgba(17,17,24,0.955)_71%,rgba(48,32,16,0.94)_100%)]",
-      "px-4 py-[1.12rem]",
-      "shadow-[inset_0_0_0_1px_rgba(222,176,76,0.13),inset_0_1px_0_rgba(255,246,218,0.045),0_14px_34px_rgba(0,0,0,0.25),0_0_30px_rgba(242,189,79,0.065)]",
+      "px-4 py-[1.18rem] sm:px-5",
+      "shadow-[0_14px_34px_rgba(0,0,0,0.25),0_0_30px_rgba(242,189,79,0.045)]",
       "before:pointer-events-none before:absolute before:inset-0 before:bg-[linear-gradient(112deg,transparent_0%,rgba(255,247,220,0.045)_40%,rgba(255,247,220,0.020)_53%,transparent_68%)]",
-      "after:pointer-events-none after:absolute after:inset-x-5 after:top-0 after:h-px after:bg-[linear-gradient(90deg,transparent,rgba(255,231,173,0.20),transparent)]",
-      "transition hover:shadow-[inset_0_0_0_1px_rgba(236,194,95,0.18),inset_0_1px_0_rgba(255,246,218,0.055),0_14px_34px_rgba(0,0,0,0.25),0_0_34px_rgba(242,189,79,0.085)]",
+      "after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-0",
+      "transition hover:shadow-[0_14px_34px_rgba(0,0,0,0.25),0_0_34px_rgba(242,189,79,0.065)]",
       className,
     ].filter(Boolean).join(" ");
 
     return (
       <div
         className={beltCardClassName}
+
+        style={{
+          backgroundImage: `linear-gradient(90deg, rgba(3,7,18,0.34), rgba(3,7,18,0.16) 42%, rgba(3,7,18,0.00) 70%), url("${BELT_PAYOUT_CARD_BG}")`,
+          backgroundPosition: "49.55% 39%",
+          backgroundSize: "100.95% 102.35%",
+          backgroundRepeat: "no-repeat",
+        }}
       >
         <button
           type="button"
           onClick={() => {
             if (hasChildren) setExpanded((value) => !value);
           }}
-          className={`relative min-h-[8.1rem] w-full text-left focus:outline-none focus-visible:outline-none ${
+          className={`relative min-h-[10.625rem] w-full text-left focus:outline-none focus-visible:outline-none ${
             hasChildren ? "cursor-pointer" : "cursor-default"
           }`}
         >
-          <div className="absolute right-0 top-0 z-40 flex max-w-[52%] flex-wrap items-center justify-end gap-2">
+          <div className="absolute right-5 top-0 z-40 flex max-w-[45%] flex-wrap items-center justify-end gap-2">
             <FeedChip>{displayTypeLabel}</FeedChip>
             {amountLabel ? <FeedChip>{displayAmountLabel}</FeedChip> : null}
             <FeedChip>{displayTimestampLabel}</FeedChip>
@@ -1248,18 +1333,18 @@ function ActivityRow({
             ) : null}
           </div>
 
-          <div className="pointer-events-none absolute bottom-[-0.1rem] right-[-1.35rem] top-[1.6rem] z-30 flex w-[35%] items-center justify-center">
+          <div className={beltStageClassName}>
             <Image
               src={beltAsset.src}
               alt={beltAsset.alt}
               width={900}
               height={420}
               unoptimized
-              className="h-auto max-h-[6.85rem] w-auto max-w-full object-contain opacity-[0.96] drop-shadow-[0_20px_38px_rgba(0,0,0,0.70)]"
+              className={beltImageClassName}
             />
           </div>
 
-          <div className="relative z-20 flex min-h-[8.1rem] max-w-[66%] flex-col justify-start pr-5 pt-2.5">
+          <div className="relative z-20 flex min-h-[10.625rem] max-w-[62%] flex-col justify-start pr-4 pt-3 sm:max-w-[61%]">
             <div className="flex min-w-0 items-start gap-3">
               <div className="relative mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-transparent bg-black/14 shadow-[inset_0_0_0_1px_rgba(111,87,37,0.24),inset_0_1px_0_rgba(255,255,255,0.050),0_0_18px_rgba(251,191,36,0.08)]">
                 <Image
@@ -1281,15 +1366,28 @@ function ActivityRow({
                     <div className="break-words font-serif text-[1.32rem] font-semibold leading-tight tracking-[-0.012em] text-[#f2e4b8] md:text-[1.44rem]">
                       {beltHeadline}
                     </div>
-                    <div className="mt-2 min-w-0 break-words text-[13px] font-medium leading-6 text-[#d1bf92]">
-                      {beltDetail.startsWith("Founder Rewards") ? (
-                        <>
-                          <span className="text-[#f0ca54]">Founder Rewards</span>
-                          {beltDetail.slice("Founder Rewards".length)}
-                        </>
-                      ) : (
-                        beltDetail
-                      )}
+                    <div className="mt-2.5 space-y-1.5 overflow-hidden text-[13px] font-medium leading-[1.16rem] text-[#d1bf92]">
+                      {beltContextLines.map((line, index) => (
+                        <div
+                          key={`${line}-${index}`}
+                          className={`truncate ${
+                            index === 0
+                              ? "text-[#f0ca54]"
+                              : index === 1
+                                ? "font-mono text-[#c8b88f]/84"
+                                : "text-[#d6c49b]/90"
+                          }`}
+                        >
+                          {line.startsWith("Founder Rewards") ? (
+                            <>
+                              <span className="text-[#f0ca54]">Founder Rewards</span>
+                              {line.slice("Founder Rewards".length)}
+                            </>
+                          ) : (
+                            line
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
