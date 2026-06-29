@@ -71,8 +71,9 @@ journalctl -u aoe2dewarwagers-web.service -n 40 --no-pager
   full leaderboard hydration, profile Basic/Advanced/Extreme routing, improved
   media operator controls, and cinematic trophy payout cards.
 - Added the DE-branded `/zodiac` Deathmatch training and replay-review funnel.
-- This refresh adds no new Prisma migration file, but the standard deploy still
-  runs `npx prisma migrate deploy` before the build.
+- Added `20260629_040500_add_precise_staking_reward_columns` so precise
+  `reward_uwolo` allocations and micro-reward carry are part of DE schema
+  history instead of relying on undocumented database state.
 
 ### 2026-06-25 HD parity refresh: trophies, events, Wolo, staking, and media
 

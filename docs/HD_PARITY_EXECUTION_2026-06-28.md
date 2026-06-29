@@ -72,6 +72,10 @@ Production smoke targets:
 - `/api/lobby`, `/api/challenges`, `/api/staking/config`,
   `/api/staking/activity`, `/api/wolo/network`
 
+The DE schema also includes
+`20260629_040500_add_precise_staking_reward_columns`, which closes the missing
+schema-history gap for `reward_uwolo` and `micro_reward_carry_uwolo`.
+
 ## Deployment
 
 Push DE `main`, then on the VPS:
