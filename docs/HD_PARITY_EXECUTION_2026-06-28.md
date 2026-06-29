@@ -89,5 +89,10 @@ sudo systemctl restart aoe2dewarwagers-web.service
 systemctl is-active aoe2dewarwagers-web.service
 ```
 
-Completion status: implementation complete; production verification is
-recorded after deploy.
+## Completion record
+
+Complete. Commits `4e09a83`, `eff8fd8`, and `58f9536` were pushed and deployed
+to `aoe2dewarwagers.com`. Prisma reports 47 applied migrations, both DE web and
+API services are active, the WoloChain node reports advancing consensus, and
+the listed public route/API smoke targets return successfully with no fresh
+application errors in the web service journal.
