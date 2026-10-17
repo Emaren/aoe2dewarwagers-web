@@ -255,6 +255,20 @@ function cooldownPayload(record: FaucetClaimRecord) {
 }
 
 export async function POST(request: NextRequest) {
+  // Financial fail-closed quarantine: this DE handler still has a legacy
+  // keyring-backed mainnet MsgSend path, address-only cooldown, and no
+  // HD-equivalent authenticated-account reservation/circuit breaker.
+  // Environment-variable absence does NOT disable its built-in CLI defaults.
+  // Never re-enable this mainnet path with a feature flag alone: require the
+  // reviewed HD security invariants and tests to be ported and certified.
+  // Testnet behaviour remains unchanged.
+  if (isMainnetFaucetRuntime) {
+    return NextResponse.json(
+      { detail: "Mainnet WOLO faucet temporarily unavailable pending security review." },
+      { status: 503, headers: NO_STORE_HEADERS }
+    );
+  }
+
   try {
     const prisma = getPrisma();
     const sessionUid = await resolveRequestUid(request);
