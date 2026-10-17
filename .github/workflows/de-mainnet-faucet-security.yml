@@ -1,0 +1,30 @@
+name: DE mainnet faucet fail-closed security
+
+on:
+  pull_request:
+    paths:
+      - app/api/wolo/faucet/claim/route.ts
+      - tests/de-mainnet-faucet-quarantine.test.mts
+      - .github/workflows/de-mainnet-faucet-security.yml
+  push:
+    branches:
+      - main
+    paths:
+      - app/api/wolo/faucet/claim/route.ts
+      - tests/de-mainnet-faucet-quarantine.test.mts
+      - .github/workflows/de-mainnet-faucet-security.yml
+
+permissions:
+  contents: read
+
+jobs:
+  mainnet-faucet-quarantine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify mainnet faucet is fail-closed before broadcast
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/de-mainnet-faucet-quarantine.test.mts
